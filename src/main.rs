@@ -98,13 +98,12 @@ const APP: () = {
         static mut DELAY_PATTERN: [u32; 4] = [1, 3, 1, 20];
         static mut I: usize = 0;
 
+        cx.resources.heartbeat_led.toggle().ok();
+        *I = (*I + 1) % DELAY_PATTERN.len();
+
         cx.schedule
             .heartbeat(cx.scheduled + (DELAY_PATTERN[*I] * 8_000_000).cycles())
             .ok();
-
-        cx.resources.heartbeat_led.toggle().ok();
-
-        *I = (*I + 1) % DELAY_PATTERN.len();
     }
 
     extern "C" {
