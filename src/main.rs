@@ -1,3 +1,6 @@
+//! `datalogger` is a toy application that reads temperature and humidity data from a DHT11 sensor
+//! and stores it into a FAT-formatted SD card.
+
 #![deny(unsafe_code)]
 #![no_main]
 #![no_std]
@@ -27,10 +30,15 @@ use storage::{SdCard, Storage};
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = rtfm::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
+        /// A `Copy`able delay provider based on DWT.
         dwt: Dwt,
+        /// DHT11 sensor instance.
         dht11: Dht11<PA8<Output<OpenDrain>>>,
+        /// SD-backed persistent storage.
         storage: Storage<dwt::Delay>,
+        /// LED indicating busy activity
         busy_led: PD13<Output<PushPull>>,
+        /// LED indicating CPU activity
         heartbeat_led: PD12<Output<PushPull>>,
     }
 
@@ -38,7 +46,7 @@ const APP: () = {
     fn init(cx: init::Context) -> init::LateResources {
         use stm32f4xx_hal::time::U32Ext;
 
-        // We are using the HSE oscillator here for accurate communication with the DHT11.
+        // Clock the MCU using the external crystal and run the CPU at full speed
         let rcc = cx.device.RCC.constrain();
         let clocks = rcc.cfgr.use_hse(8.mhz()).sysclk(168.mhz()).freeze();
 
@@ -93,14 +101,15 @@ const APP: () = {
         }
     }
 
-    #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11])]
+    /// Periodic software task which reads temperature and humidity data from the DHT11
+    /// and schedules the data to be backed up to the persistent storage.
+    #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11], priority = 2)]
     fn sensor_reading(cx: sensor_reading::Context) {
         static READING_PERIOD: u32 = 500_000_000;
 
-        let mut delay = cx.resources.dwt.delay();
+        let sensor_reading::Resources { dwt, dht11 } = cx.resources;
 
-        // Perform sensor reading and save the measurement
-        if let Ok(meas) = cx.resources.dht11.perform_measurement(&mut delay) {
+        if let Ok(meas) = dht11.perform_measurement(&mut dwt.delay()) {
             cx.spawn.save_data(meas).unwrap();
         }
 
@@ -109,7 +118,8 @@ const APP: () = {
             .unwrap();
     }
 
-    #[task(resources = [dwt, storage, busy_led])]
+    /// Software task spawned whenever new data needs to be saved.
+    #[task(resources = [dwt, storage, busy_led], priority = 2)]
     fn save_data(cx: save_data::Context, meas: Measurement) {
         let save_data::Resources {
             storage,
@@ -119,7 +129,7 @@ const APP: () = {
 
         busy_led.set_high().unwrap();
 
-        // Try writing data to storage, and retry in case it fails
+        // Try writing data to storage, and retry forever in case it fails
         while storage.save_measurement(meas).is_err() {
             dwt.delay().delay_ms(10_u32);
         }
@@ -127,7 +137,8 @@ const APP: () = {
         busy_led.set_low().unwrap();
     }
 
-    #[task(schedule = [heartbeat], resources = [heartbeat_led])]
+    /// Low-priority background task that blinks the heartbeat led.
+    #[task(schedule = [heartbeat], resources = [heartbeat_led], priority = 1)]
     fn heartbeat(cx: heartbeat::Context) {
         static mut DELAY_PATTERN: [u32; 4] = [1, 3, 1, 20];
         static mut I: usize = 0;
@@ -140,7 +151,9 @@ const APP: () = {
         *I = (*I + 1) % DELAY_PATTERN.len();
     }
 
+    // Unused interrupts to dispatch software tasks
     extern "C" {
-        fn UART4();
+        fn EXTI0();
+        fn EXTI1();
     }
 };
