@@ -4,15 +4,14 @@
 //! The main goal of this project is to explore the production readyness of the Rust ecosystem for
 //! real-world embedded applications.
 
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
 mod storage;
+mod time;
 
 use dht11::{Dht11, Measurement};
 use panic_semihosting as _;
-use rtfm::cyccnt::U32Ext;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -29,8 +28,14 @@ use stm32f4xx_hal::{
     sdio::{ClockFreq, Sdio},
 };
 use storage::{SdCard, Storage};
+use time::{SystemTimer, U32Ext};
+use typenum::U168;
 
-#[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = rtfm::cyccnt::CYCCNT)]
+#[rtfm::app(
+    device = stm32f4xx_hal::stm32,
+    peripherals = true,
+    monotonic = crate::time::SystemTimer<typenum::U168>
+)]
 const APP: () = {
     struct Resources {
         /// A `Copy`able delay provider based on DWT.
@@ -55,6 +60,9 @@ const APP: () = {
 
         // Use the DWT as an accurate delay provider
         let dwt = cx.core.DWT.constrain(cx.core.DCB, clocks);
+
+        // Use TIM2 as monotonic clock provider
+        SystemTimer::<U168>::constrain(cx.device.TIM2, clocks);
 
         let gpioa = cx.device.GPIOA.split();
         let gpioc = cx.device.GPIOC.split();
@@ -108,7 +116,7 @@ const APP: () = {
     /// and schedules the data to be backed up to the persistent storage.
     #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11], priority = 2)]
     fn sensor_reading(cx: sensor_reading::Context) {
-        static READING_PERIOD: u32 = 500_000_000;
+        static READING_PERIOD: u32 = 60_000; // 1 minute
 
         let sensor_reading::Resources { dwt, dht11 } = cx.resources;
 
@@ -117,7 +125,7 @@ const APP: () = {
         }
 
         cx.schedule
-            .sensor_reading(cx.scheduled + READING_PERIOD.cycles())
+            .sensor_reading(cx.scheduled + READING_PERIOD.ms())
             .unwrap();
     }
 
@@ -143,11 +151,11 @@ const APP: () = {
     /// Low-priority background task that blinks the heartbeat led.
     #[task(schedule = [heartbeat], resources = [heartbeat_led], priority = 1)]
     fn heartbeat(cx: heartbeat::Context) {
-        static mut DELAY_PATTERN: [u32; 4] = [1, 3, 1, 20];
+        static mut DELAY_PATTERN: [u32; 4] = [50, 150, 50, 1_000];
         static mut I: usize = 0;
 
         cx.schedule
-            .heartbeat(cx.scheduled + (DELAY_PATTERN[*I] * 8_000_000).cycles())
+            .heartbeat(cx.scheduled + DELAY_PATTERN[*I].ms())
             .unwrap();
 
         cx.resources.heartbeat_led.toggle().unwrap();
