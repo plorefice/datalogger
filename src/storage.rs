@@ -1,14 +1,10 @@
-use core::{
-    cell::RefCell,
-    fmt::{self, Write},
-};
+use core::{cell::RefCell, fmt::Write};
 use dht11::Measurement;
 use embedded_sdmmc::{
-    Block, BlockCount, BlockDevice, BlockIdx, Controller, File, Mode, TimeSource, Timestamp,
-    Volume, VolumeIdx,
+    Block, BlockCount, BlockDevice, BlockIdx, Controller, Mode, TimeSource, Timestamp, Volume,
+    VolumeIdx,
 };
-use heapless::{consts::U32, ArrayLength, Vec};
-use panic_semihosting as _;
+use heapless::{consts::U4096, String};
 use stm32f4xx_hal::{
     hal::blocking::delay::DelayMs,
     sdio::{self, Sdio},
@@ -88,28 +84,20 @@ impl TimeSource for Epoch {
 pub struct Storage<D: DelayMs<u8>> {
     controller: Controller<SdCard<D>, Epoch>,
     volume: Volume,
-    data: File,
+    buffer: String<U4096>,
 }
 
 impl<D: DelayMs<u8>> Storage<D> {
     /// Creates a new storage using the provided SD card instance.
     pub fn new(sd: SdCard<D>) -> Result<Self, embedded_sdmmc::Error<sdio::Error>> {
         let mut controller = Controller::new(sd, Epoch);
-        let mut volume = controller.get_volume(VolumeIdx(0))?;
-
-        let root_dir = controller.open_root_dir(&volume)?;
-
-        let data = controller.open_file_in_dir(
-            &mut volume,
-            &root_dir,
-            "data.csv",
-            Mode::ReadWriteCreateOrAppend,
-        )?;
+        let volume = controller.get_volume(VolumeIdx(0))?;
+        let buffer = String::new();
 
         Ok(Storage {
             controller,
             volume,
-            data,
+            buffer,
         })
     }
 
@@ -118,49 +106,45 @@ impl<D: DelayMs<u8>> Storage<D> {
         &mut self,
         meas: Measurement,
     ) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
-        let mut s: String<U32> = String::new();
+        // Try storing the measurement in memory first.
+        // If the memory is full, flush it to disk, then try again.
+        if writeln!(
+            &mut self.buffer,
+            "{:.02},{:.02}",
+            meas.temperature, meas.humidity
+        )
+        .is_err()
+        {
+            self.flush_buffer()?;
+            self.save_measurement(meas)?;
+        }
 
-        writeln!(&mut s, "{:.02},{:.02}", meas.temperature, meas.humidity).unwrap();
+        Ok(())
+    }
+
+    /// Flushes the internal buffer to the underlying storage. The buffer is then cleared.
+    fn flush_buffer(&mut self) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
+        let root_dir = self.controller.open_root_dir(&self.volume)?;
+
+        let mut data = self.controller.open_file_in_dir(
+            &mut self.volume,
+            &root_dir,
+            "data.csv",
+            Mode::ReadWriteCreateOrAppend,
+        )?;
 
         self.controller.write(
             &mut self.volume,
-            &mut self.data,
-            &s.into_bytes_exact().unwrap(),
+            &mut data,
+            &self.buffer.as_str().as_bytes(),
         )?;
 
+        self.buffer.clear();
+
+        // Files and dirs and not closed automatically when dropped!
+        self.controller.close_file(&mut self.volume, data)?;
+        self.controller.close_dir(&mut self.volume, root_dir);
+
         Ok(())
-    }
-}
-
-/// Wrapper around a `heapless::String` which keeps track
-/// of the amount of bytes written into it.
-struct String<N: ArrayLength<u8>> {
-    inner: heapless::String<N>,
-    len: usize,
-}
-
-impl<N: ArrayLength<u8>> Write for String<N> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        write!(&mut self.inner, "{}", s)?;
-        self.len += s.len();
-        Ok(())
-    }
-}
-
-impl<N: ArrayLength<u8>> String<N> {
-    /// Creates a new fixed-size string.
-    fn new() -> Self {
-        Self {
-            inner: heapless::String::new(),
-            len: 0,
-        }
-    }
-
-    /// Converts the string into a `Vec<u8>` containing the portion of the string
-    /// that has been written to.
-    fn into_bytes_exact(self) -> Result<Vec<u8, N>, ()> {
-        let mut v = self.inner.into_bytes();
-        v.resize(self.len, 0)?;
-        Ok(v)
     }
 }

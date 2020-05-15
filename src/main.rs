@@ -1,5 +1,8 @@
 //! `datalogger` is a toy application that reads temperature and humidity data from a DHT11 sensor
 //! and stores it into a FAT-formatted SD card.
+//!
+//! The main goal of this project is to explore the production readyness of the Rust ecosystem for
+//! real-world embedded applications.
 
 #![deny(unsafe_code)]
 #![no_main]
