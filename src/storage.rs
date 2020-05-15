@@ -4,7 +4,10 @@ use embedded_sdmmc::{
     Block, BlockCount, BlockDevice, BlockIdx, Controller, Mode, TimeSource, Timestamp, Volume,
     VolumeIdx,
 };
-use heapless::{consts::U4096, String};
+use heapless::{
+    consts::{U16, U4096},
+    String,
+};
 use stm32f4xx_hal::{
     hal::blocking::delay::DelayMs,
     sdio::{self, Sdio},
@@ -106,17 +109,16 @@ impl<D: DelayMs<u8>> Storage<D> {
         &mut self,
         meas: Measurement,
     ) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
+        let mut tmp = String::<U16>::new();
+
+        writeln!(&mut tmp, "{:.02},{:.02}", meas.temperature, meas.humidity).unwrap();
+
         // Try storing the measurement in memory first.
         // If the memory is full, flush it to disk, then try again.
-        if writeln!(
-            &mut self.buffer,
-            "{:.02},{:.02}",
-            meas.temperature, meas.humidity
-        )
-        .is_err()
-        {
+        if self.buffer.push_str(&tmp).is_err() {
             self.flush_buffer()?;
-            self.save_measurement(meas)?;
+            // NOTE(unwrap) this must not fail after the buffer was flushed
+            self.buffer.push_str(&tmp).unwrap();
         }
 
         Ok(())
