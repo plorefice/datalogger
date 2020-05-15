@@ -1,30 +1,36 @@
-use cast::{i32, u16, u32, u64};
+use cast::{u32, u64};
 use core::{
+    cell::RefCell,
     cmp::Ordering,
     convert::{Infallible, TryInto},
-    fmt,
-    marker::PhantomData,
-    ops, time,
+    fmt, ops, time,
 };
-use stm32f4xx_hal::{rcc::Clocks, stm32::RCC};
+use cortex_m::{
+    interrupt::{self, Mutex},
+    peripheral::NVIC,
+};
+use stm32f4xx_hal::{
+    rcc::Clocks,
+    stm32::{Interrupt, TIM2},
+    time::U32Ext,
+    timer::{Event, Timer},
+};
 
-/// Concrete hardware timer to use as provider.
-type TIM = stm32f4xx_hal::stm32::TIM2;
+/// Current time expressed in milliseconds.
+/// It needs to be updated from interrupt context, so it is protected by a `Mutex`.
+static NOW: Mutex<RefCell<i64>> = Mutex::new(RefCell::new(0));
 
-/// A measurement of the number of microseconds elapsed since an arbitrary point in time.
+/// A measurement of the amount of time elapsed since an arbitrary start.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Instant {
-    inner: i32,
+    inner: i64,
 }
 
 impl Instant {
     /// Returns an instant corresponding to "now".
     pub fn now() -> Self {
-        // NOTE(unsafe) TIM must only be used by this module
-        let tim = unsafe { &*TIM::ptr() };
-
         Instant {
-            inner: i32(tim.cnt.read().bits()).unwrap(),
+            inner: interrupt::free(|cs| *NOW.borrow(cs).borrow()),
         }
     }
 
@@ -32,28 +38,26 @@ impl Instant {
     pub fn elapsed(&self) -> Duration {
         let diff = Instant::now().inner.wrapping_sub(self.inner);
         assert!(diff >= 0, "instant now is earlier than self");
-        Duration::from_micros(u32(diff).unwrap())
+        Duration::from_millis(u32(diff).unwrap())
     }
 
     /// Returns the amount of time elapsed from another instant to this one.
     pub fn duration_since(&self, earlier: Instant) -> Duration {
         let diff = self.inner.wrapping_sub(earlier.inner);
         assert!(diff >= 0, "second instant is later than self");
-        Duration::from_micros(u32(diff).unwrap())
+        Duration::from_millis(u32(diff).unwrap())
     }
 }
 
 impl fmt::Debug for Instant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Instant")
-            .field(&(self.inner as u32))
-            .finish()
+        f.debug_tuple("Instant").field(&self.inner).finish()
     }
 }
 
 impl ops::AddAssign<Duration> for Instant {
     fn add_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_add(dur.inner.as_micros() as i32);
+        self.inner = self.inner.wrapping_add(dur.inner.as_millis() as i64);
     }
 }
 
@@ -68,7 +72,7 @@ impl ops::Add<Duration> for Instant {
 
 impl ops::SubAssign<Duration> for Instant {
     fn sub_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_sub(dur.inner.as_micros() as i32);
+        self.inner = self.inner.wrapping_sub(dur.inner.as_millis() as i64);
     }
 }
 
@@ -114,20 +118,13 @@ impl Duration {
             inner: time::Duration::from_millis(u64(ms)),
         }
     }
-
-    /// Creates a new `Duration` from the specified number of microseconds.
-    pub fn from_micros(us: u32) -> Self {
-        Duration {
-            inner: time::Duration::from_micros(u64(us)),
-        }
-    }
 }
 
 impl TryInto<u32> for Duration {
     type Error = Infallible;
 
     fn try_into(self) -> Result<u32, Infallible> {
-        Ok(self.inner.as_micros() as u32)
+        Ok(self.inner.as_millis() as u32)
     }
 }
 
@@ -163,68 +160,38 @@ impl ops::Sub<Duration> for Duration {
     }
 }
 
-/// Adds the `ms` and `us` method to the `u32` type.
-pub trait U32Ext {
-    /// Converts the `u32` value into milliseconds.
-    fn ms(self) -> Duration;
-
-    /// Converts the `u32` value into microseconds.
-    fn us(self) -> Duration;
+/// Implementation of the `Monotonic` trait based on a hardware timer with millisecond precision.
+pub struct SystemTimer {
+    inner: Timer<TIM2>,
 }
 
-impl U32Ext for u32 {
-    fn ms(self) -> Duration {
-        Duration::from_millis(self)
+impl SystemTimer {
+    /// Initializes the system timer.
+    pub fn init(tim: TIM2, clocks: Clocks) -> Self {
+        // NOTE(unsafe) this is used only during initialization
+        unsafe { NVIC::unmask(Interrupt::TIM2) };
+
+        let mut inner = Timer::tim2(tim, 1.khz(), clocks);
+        inner.listen(Event::TimeOut);
+
+        Self { inner }
     }
 
-    fn us(self) -> Duration {
-        Duration::from_micros(self)
-    }
-}
-
-/// Implementation of the `Monotonic` trait based on a hardware timer with microsecond precision.
-///
-/// The `F` parameter must be set to the system clock frequency in Mhz using `typenum`.
-pub struct SystemTimer<F> {
-    _marker: PhantomData<F>,
-}
-
-impl<F> SystemTimer<F> {
-    pub fn constrain(tim: TIM, clocks: Clocks) {
-        // NOTE(unsafe) This executes only during initialisation
-        let rcc = unsafe { &(*RCC::ptr()) };
-
-        // Enable and reset peripheral to a clean slate state
-        rcc.apb1enr.modify(|_, w| w.tim2en().set_bit());
-        rcc.apb1rstr.modify(|_, w| w.tim2rst().set_bit());
-        rcc.apb1rstr.modify(|_, w| w.tim2rst().clear_bit());
-
-        // Pause and reset counter
-        tim.cr1.modify(|_, w| w.cen().clear_bit());
-        tim.cnt.reset();
-
-        // Configure prescaler to achieve a counter frequency of 1 Mhz
-        let pclk_mul = if clocks.ppre1() == 1 { 1 } else { 2 };
-        let ticks = u16(clocks.pclk1().0 * pclk_mul / 1_000_000).unwrap();
-        tim.psc.write(|w| w.psc().bits(ticks - 1));
-
-        // Trigger prescaler update
-        tim.egr.write(|w| w.ug().set_bit());
-
-        // Start counter
-        tim.cr1.modify(|_, w| w.cen().set_bit());
+    /// Ticks the system timer, increasing the current time by one millisecond.
+    pub fn tick(&mut self) {
+        interrupt::free(|cs| {
+            self.inner.clear_interrupt(Event::TimeOut);
+            *NOW.borrow(cs).borrow_mut() += 1;
+        });
     }
 }
 
-impl<F> rtfm::Monotonic for SystemTimer<F>
-where
-    F: typenum::Unsigned,
-{
+impl rtfm::Monotonic for SystemTimer {
     type Instant = Instant;
 
     fn ratio() -> rtfm::Fraction {
         rtfm::Fraction {
-            numerator: F::U32,
+            numerator: 168,
             denominator: 1,
         }
     }
@@ -234,7 +201,7 @@ where
     }
 
     unsafe fn reset() {
-        { &*TIM::ptr() }.cnt.reset();
+        interrupt::free(|cs| *NOW.borrow(cs).borrow_mut() = 0);
     }
 
     fn zero() -> Self::Instant {

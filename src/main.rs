@@ -28,18 +28,15 @@ use stm32f4xx_hal::{
     sdio::{ClockFreq, Sdio},
 };
 use storage::{SdCard, Storage};
-use time::{SystemTimer, U32Ext};
-use typenum::U168;
+use time::{Duration, SystemTimer};
 
-#[rtfm::app(
-    device = stm32f4xx_hal::stm32,
-    peripherals = true,
-    monotonic = crate::time::SystemTimer<typenum::U168>
-)]
+#[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::SystemTimer)]
 const APP: () = {
     struct Resources {
         /// A `Copy`able delay provider based on DWT.
         dwt: Dwt,
+        /// System clock.
+        clk: SystemTimer,
         /// DHT11 sensor instance.
         dht11: Dht11<PA8<Output<OpenDrain>>>,
         /// SD-backed persistent storage.
@@ -62,7 +59,7 @@ const APP: () = {
         let dwt = cx.core.DWT.constrain(cx.core.DCB, clocks);
 
         // Use TIM2 as monotonic clock provider
-        SystemTimer::<U168>::constrain(cx.device.TIM2, clocks);
+        let clk = SystemTimer::init(cx.device.TIM2, clocks);
 
         let gpioa = cx.device.GPIOA.split();
         let gpioc = cx.device.GPIOC.split();
@@ -105,6 +102,7 @@ const APP: () = {
 
         init::LateResources {
             dwt,
+            clk,
             dht11,
             storage,
             busy_led,
@@ -125,7 +123,7 @@ const APP: () = {
         }
 
         cx.schedule
-            .sensor_reading(cx.scheduled + READING_PERIOD.ms())
+            .sensor_reading(cx.scheduled + Duration::from_millis(READING_PERIOD))
             .unwrap();
     }
 
@@ -155,11 +153,17 @@ const APP: () = {
         static mut I: usize = 0;
 
         cx.schedule
-            .heartbeat(cx.scheduled + DELAY_PATTERN[*I].ms())
+            .heartbeat(cx.scheduled + Duration::from_millis(DELAY_PATTERN[*I]))
             .unwrap();
 
         cx.resources.heartbeat_led.toggle().unwrap();
         *I = (*I + 1) % DELAY_PATTERN.len();
+    }
+
+    /// Interrupt from the system timer. Runs at the highest priority.
+    #[task(binds = TIM2, resources = [clk], priority = 15)]
+    fn system_timer(cx: system_timer::Context) {
+        cx.resources.clk.tick();
     }
 
     // Unused interrupts to dispatch software tasks
