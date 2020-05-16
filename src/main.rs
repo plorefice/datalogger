@@ -10,8 +10,9 @@
 mod storage;
 mod time;
 
+use atomic::Ordering;
+use core::{panic::PanicInfo, sync::atomic};
 use dht11::{Dht11, Measurement};
-use panic_semihosting as _;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -174,3 +175,11 @@ const APP: () = {
         fn EXTI1();
     }
 };
+
+#[inline(never)]
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! {
+    loop {
+        atomic::compiler_fence(Ordering::SeqCst);
+    }
+}
