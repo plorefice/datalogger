@@ -1,14 +1,12 @@
-use cast::{u32, u64};
+use cast::{i64, u32, u64};
 use core::{
-    cell::RefCell,
-    cmp::Ordering,
+    cmp,
     convert::{Infallible, TryInto},
-    fmt, ops, time,
+    fmt, ops,
+    sync::atomic::{AtomicU32, Ordering},
+    time,
 };
-use cortex_m::{
-    interrupt::{self, Mutex},
-    peripheral::NVIC,
-};
+use cortex_m::peripheral::NVIC;
 use stm32f4xx_hal::{
     rcc::Clocks,
     stm32::{Interrupt, TIM2},
@@ -17,8 +15,7 @@ use stm32f4xx_hal::{
 };
 
 /// Current time expressed in milliseconds.
-/// It needs to be updated from interrupt context, so it is protected by a `Mutex`.
-static NOW: Mutex<RefCell<i64>> = Mutex::new(RefCell::new(0));
+static NOW: AtomicU32 = AtomicU32::new(0);
 
 /// A measurement of the amount of time elapsed since an arbitrary start.
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -30,7 +27,7 @@ impl Instant {
     /// Returns an instant corresponding to "now".
     pub fn now() -> Self {
         Instant {
-            inner: interrupt::free(|cs| *NOW.borrow(cs).borrow()),
+            inner: i64(NOW.load(Ordering::Acquire)),
         }
     }
 
@@ -99,13 +96,13 @@ impl ops::Sub<Instant> for Instant {
 }
 
 impl Ord for Instant {
-    fn cmp(&self, rhs: &Self) -> Ordering {
+    fn cmp(&self, rhs: &Self) -> cmp::Ordering {
         self.inner.wrapping_sub(rhs.inner).cmp(&0)
     }
 }
 
 impl PartialOrd for Instant {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, rhs: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(rhs))
     }
 }
@@ -189,10 +186,8 @@ impl SystemTimer {
 
     /// Ticks the system timer, increasing the current time by one millisecond.
     pub fn tick(&mut self) {
-        interrupt::free(|cs| {
-            self.inner.clear_interrupt(Event::TimeOut);
-            *NOW.borrow(cs).borrow_mut() += 1;
-        });
+        self.inner.clear_interrupt(Event::TimeOut);
+        NOW.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -211,7 +206,7 @@ impl rtfm::Monotonic for SystemTimer {
     }
 
     unsafe fn reset() {
-        interrupt::free(|cs| *NOW.borrow(cs).borrow_mut() = 0);
+        NOW.store(0, Ordering::Release);
     }
 
     fn zero() -> Self::Instant {
