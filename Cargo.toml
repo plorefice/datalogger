@@ -13,7 +13,7 @@ panic-semihosting = "0.5.3"
 embedded-sdmmc = "0.3.0"
 heapless = "0.5.5"
 typenum = "1.12.0"
-dht11 = "0.1.0"
+dht11 = { version = "0.2.0", features = ["dwt"] }
 
 [dependencies.cast]
 version = "0.2.3"
