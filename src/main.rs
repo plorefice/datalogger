@@ -28,7 +28,7 @@ use stm32f4xx_hal::{
     sdio::{ClockFreq, Sdio},
 };
 use storage::{SdCard, Storage};
-use time::{Duration, SystemTimer};
+use time::{Duration, Instant, SystemTimer};
 
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::SystemTimer)]
 const APP: () = {
@@ -136,10 +136,12 @@ const APP: () = {
             dwt,
         } = cx.resources;
 
+        let acquisition_time = Instant::now();
+
         busy_led.set_high().unwrap();
 
         // Try writing data to storage, and retry forever in case it fails
-        while storage.save_measurement(meas).is_err() {
+        while storage.save_measurement(meas, acquisition_time).is_err() {
             dwt.delay().delay_ms(10_u32);
         }
 

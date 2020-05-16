@@ -47,6 +47,11 @@ impl Instant {
         assert!(diff >= 0, "second instant is later than self");
         Duration::from_millis(u32(diff).unwrap())
     }
+
+    /// Returns the origin of time.
+    pub fn zero() -> Instant {
+        Instant { inner: 0 }
+    }
 }
 
 impl fmt::Debug for Instant {
@@ -57,7 +62,7 @@ impl fmt::Debug for Instant {
 
 impl ops::AddAssign<Duration> for Instant {
     fn add_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_add(dur.inner.as_millis() as i64);
+        self.inner = self.inner.wrapping_add(dur.as_millis() as i64);
     }
 }
 
@@ -72,7 +77,7 @@ impl ops::Add<Duration> for Instant {
 
 impl ops::SubAssign<Duration> for Instant {
     fn sub_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_sub(dur.inner.as_millis() as i64);
+        self.inner = self.inner.wrapping_sub(dur.as_millis() as i64);
     }
 }
 
@@ -118,13 +123,18 @@ impl Duration {
             inner: time::Duration::from_millis(u64(ms)),
         }
     }
+
+    /// Returns the total number of whole milliseconds contained by this Duration.
+    pub fn as_millis(self) -> u64 {
+        self.inner.as_millis() as u64
+    }
 }
 
 impl TryInto<u32> for Duration {
     type Error = Infallible;
 
     fn try_into(self) -> Result<u32, Infallible> {
-        Ok(self.inner.as_millis() as u32)
+        Ok(self.as_millis() as u32)
     }
 }
 
@@ -205,6 +215,6 @@ impl rtfm::Monotonic for SystemTimer {
     }
 
     fn zero() -> Self::Instant {
-        Instant { inner: 0 }
+        Instant::zero()
     }
 }

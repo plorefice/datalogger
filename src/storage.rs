@@ -1,11 +1,13 @@
+use crate::time::Instant;
+use cast::f32;
 use core::{cell::RefCell, fmt::Write};
 use dht11::Measurement;
 use embedded_sdmmc::{
-    Block, BlockCount, BlockDevice, BlockIdx, Controller, Mode, TimeSource, Timestamp, Volume,
-    VolumeIdx,
+    Block, BlockCount, BlockDevice, BlockIdx, Controller, File, Mode, TimeSource, Timestamp,
+    Volume, VolumeIdx,
 };
 use heapless::{
-    consts::{U16, U4096},
+    consts::{U32, U4096},
     String,
 };
 use stm32f4xx_hal::{
@@ -108,10 +110,21 @@ impl<D: DelayMs<u8>> Storage<D> {
     pub fn save_measurement(
         &mut self,
         meas: Measurement,
+        acquisition_time: Instant,
     ) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
-        let mut tmp = String::<U16>::new();
+        let mut tmp = String::<U32>::new();
 
-        writeln!(&mut tmp, "{:.02},{:.02}", meas.temperature, meas.humidity).unwrap();
+        let millis = acquisition_time.duration_since(Instant::zero()).as_millis();
+
+        // NOTE(unwrap) the formatted string must always fit the temporary buffer
+        writeln!(
+            &mut tmp,
+            "{:.03},{:.02},{:.02}",
+            f32(millis) / 1e3,
+            meas.temperature,
+            meas.humidity
+        )
+        .unwrap();
 
         // Try storing the measurement in memory first.
         // If the memory is full, flush it to disk, then try again.
@@ -126,26 +139,42 @@ impl<D: DelayMs<u8>> Storage<D> {
 
     /// Flushes the internal buffer to the underlying storage. The buffer is then cleared.
     fn flush_buffer(&mut self) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
-        let root_dir = self.controller.open_root_dir(&self.volume)?;
+        let mut file = self
+            .controller
+            .open_root_dir(&self.volume)
+            .and_then(|dir| {
+                let file = self.controller.open_file_in_dir(
+                    &mut self.volume,
+                    &dir,
+                    "data.csv",
+                    Mode::ReadWriteCreateOrAppend,
+                );
 
-        let mut data = self.controller.open_file_in_dir(
-            &mut self.volume,
-            &root_dir,
-            "data.csv",
-            Mode::ReadWriteCreateOrAppend,
-        )?;
+                // Not needed anymore
+                self.controller.close_dir(&self.volume, dir);
 
-        self.controller.write(
-            &mut self.volume,
-            &mut data,
-            &self.buffer.as_str().as_bytes(),
-        )?;
+                file
+            })?;
+
+        let res = self.flush_to_file(&mut file);
+
+        self.controller.close_file(&self.volume, file)?;
 
         self.buffer.clear();
 
-        // Files and dirs and not closed automatically when dropped!
-        self.controller.close_file(&mut self.volume, data)?;
-        self.controller.close_dir(&mut self.volume, root_dir);
+        res
+    }
+
+    /// Writes the internal buffer to the specified file on disk.
+    fn flush_to_file(&mut self, file: &mut File) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
+        if file.length() == 0 {
+            // New file, insert CSV header
+            self.controller
+                .write(&mut self.volume, file, b"Timestamp,Temperature,Humidity")?;
+        }
+
+        self.controller
+            .write(&mut self.volume, file, &self.buffer.as_str().as_bytes())?;
 
         Ok(())
     }
