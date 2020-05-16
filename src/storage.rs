@@ -170,7 +170,7 @@ impl<D: DelayMs<u8>> Storage<D> {
         if file.length() == 0 {
             // New file, insert CSV header
             self.controller
-                .write(&mut self.volume, file, b"Timestamp,Temperature,Humidity")?;
+                .write(&mut self.volume, file, b"Timestamp,Temperature,Humidity\n")?;
         }
 
         self.controller
