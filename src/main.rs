@@ -12,21 +12,23 @@ mod time;
 
 use atomic::Ordering;
 use core::{panic::PanicInfo, sync::atomic};
+use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
-        gpioa::PA8,
+        gpioa::{PA0, PA8},
         gpiod::{PD12, PD13},
-        GpioExt, OpenDrain, Output, PushPull,
+        Edge, ExtiPin, Floating, GpioExt, Input, OpenDrain, Output, PushPull,
         Speed::VeryHigh,
     },
     hal::{
         blocking::delay::DelayMs,
-        digital::v2::{OutputPin, ToggleableOutputPin},
+        digital::v2::{InputPin, OutputPin, ToggleableOutputPin},
     },
     rcc::RccExt,
     sdio::{ClockFreq, Sdio},
+    stm32::Interrupt,
 };
 use storage::{SdCard, Storage};
 use time::{Duration, Instant, SystemTimer};
@@ -46,10 +48,12 @@ const APP: () = {
         busy_led: PD13<Output<PushPull>>,
         /// LED indicating CPU activity
         heartbeat_led: PD12<Output<PushPull>>,
+        /// Push-button used to sync data to disk
+        sync_btn: PA0<Input<Floating>>,
     }
 
     #[init(schedule = [sensor_reading, heartbeat])]
-    fn init(cx: init::Context) -> init::LateResources {
+    fn init(mut cx: init::Context) -> init::LateResources {
         use stm32f4xx_hal::time::U32Ext;
 
         // Clock the MCU using the external crystal and run the CPU at full speed
@@ -75,6 +79,14 @@ const APP: () = {
 
         heartbeat_led.set_low().unwrap();
         busy_led.set_low().unwrap();
+
+        // Create user button
+        let mut sync_btn = gpioa.pa0.into_floating_input();
+        sync_btn.make_interrupt_source(&mut cx.device.SYSCFG);
+        sync_btn.trigger_on_edge(&mut cx.device.EXTI, Edge::RISING);
+        sync_btn.enable_interrupt(&mut cx.device.EXTI);
+        // NOTE(unsafe) we are not in an interrupt context
+        unsafe { NVIC::unmask(Interrupt::EXTI0) };
 
         // Create SDIO bus instance
         let mut sdio = Sdio::new(
@@ -108,6 +120,7 @@ const APP: () = {
             storage,
             busy_led,
             heartbeat_led,
+            sync_btn,
         }
     }
 
@@ -117,9 +130,11 @@ const APP: () = {
     fn sensor_reading(cx: sensor_reading::Context) {
         static READING_PERIOD: u32 = 60_000; // 1 minute
 
-        let sensor_reading::Resources { dwt, dht11 } = cx.resources;
+        let sensor_reading::Resources { mut dwt, dht11 } = cx.resources;
 
-        if let Ok(meas) = dht11.perform_measurement(&mut dwt.delay()) {
+        let mut dly = dwt.lock(|dwt| dwt.delay());
+
+        if let Ok(meas) = dht11.perform_measurement(&mut dly) {
             cx.spawn.save_data(meas).unwrap();
         }
 
@@ -132,21 +147,51 @@ const APP: () = {
     #[task(resources = [dwt, storage, busy_led], priority = 2)]
     fn save_data(cx: save_data::Context, meas: Measurement) {
         let save_data::Resources {
-            storage,
+            mut storage,
             busy_led,
-            dwt,
+            mut dwt,
         } = cx.resources;
 
+        let mut dly = dwt.lock(|dwt| dwt.delay());
         let acquisition_time = Instant::now();
 
         busy_led.set_high().unwrap();
 
         // Try writing data to storage, and retry forever in case it fails
-        while storage.save_measurement(meas, acquisition_time).is_err() {
-            dwt.delay().delay_ms(10_u32);
+        while storage
+            .lock(|storage| storage.save_measurement(meas, acquisition_time))
+            .is_err()
+        {
+            dly.delay_ms(10_u32);
         }
 
         busy_led.set_low().unwrap();
+    }
+
+    /// Flush buffered data to disk.
+    #[task(binds = EXTI0, resources = [sync_btn, storage, dwt], priority = 3)]
+    fn sync_data(cx: sync_data::Context) {
+        static mut LAST_SYNC_TIME: Instant = Instant::zero();
+
+        let sync_data::Resources {
+            sync_btn,
+            storage,
+            dwt,
+        } = cx.resources;
+
+        let now = Instant::now();
+        let elapsed_ms = now.duration_since(*LAST_SYNC_TIME).as_millis();
+
+        // Sync at most once a second
+        if sync_btn.is_high().unwrap() && elapsed_ms > 1_000 {
+            while storage.flush_buffer().is_err() {
+                dwt.delay().delay_ms(10_u32);
+            }
+            *LAST_SYNC_TIME = now;
+        }
+
+        // Clear interrupt
+        sync_btn.clear_interrupt_pending_bit();
     }
 
     /// Low-priority background task that blinks the heartbeat led.
@@ -171,8 +216,8 @@ const APP: () = {
 
     // Unused interrupts to dispatch software tasks
     extern "C" {
-        fn EXTI0();
         fn EXTI1();
+        fn EXTI2();
     }
 };
 

@@ -46,7 +46,7 @@ impl Instant {
     }
 
     /// Returns the origin of time.
-    pub fn zero() -> Instant {
+    pub const fn zero() -> Instant {
         Instant { inner: 0 }
     }
 }
@@ -175,7 +175,7 @@ pub struct SystemTimer {
 impl SystemTimer {
     /// Initializes the system timer.
     pub fn init(tim: TIM2, clocks: Clocks) -> Self {
-        // NOTE(unsafe) this is used only during initialization
+        // NOTE(unsafe) we are not in an interrupt context
         unsafe { NVIC::unmask(Interrupt::TIM2) };
 
         let mut inner = Timer::tim2(tim, 1.khz(), clocks);

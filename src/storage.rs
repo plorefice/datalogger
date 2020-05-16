@@ -116,17 +116,17 @@ impl<D: DelayMs<u8>> Storage<D> {
         let millis = acquisition_time.duration_since(Instant::zero()).as_millis();
 
         // Temperature to integer and decimal part
-        let t_i = meas.temperature / 100;
-        let t_d = meas.temperature.abs() - (t_i * 100);
+        let t_i = meas.temperature / 10;
+        let t_d = meas.temperature.abs() - (t_i * 10);
 
         // Humidity to integer and decimal part
-        let h_i = meas.humidity / 100;
-        let h_d = meas.humidity - (h_i * 100);
+        let h_i = meas.humidity / 10;
+        let h_d = meas.humidity - (h_i * 10);
 
         // NOTE(unwrap) the formatted string must always fit the temporary buffer
         writeln!(
             &mut tmp,
-            "{},{}.{:02},{}.{:02}",
+            "{},{}.{:01},{}.{:01}",
             millis / 1_000,
             t_i,
             t_d,
@@ -147,7 +147,7 @@ impl<D: DelayMs<u8>> Storage<D> {
     }
 
     /// Flushes the internal buffer to the underlying storage. The buffer is then cleared.
-    fn flush_buffer(&mut self) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
+    pub fn flush_buffer(&mut self) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
         let mut file = self
             .controller
             .open_root_dir(&self.volume)
