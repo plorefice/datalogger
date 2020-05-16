@@ -1,5 +1,4 @@
 use crate::time::Instant;
-use cast::f32;
 use core::{cell::RefCell, fmt::Write};
 use dht11::Measurement;
 use embedded_sdmmc::{
@@ -116,13 +115,23 @@ impl<D: DelayMs<u8>> Storage<D> {
 
         let millis = acquisition_time.duration_since(Instant::zero()).as_millis();
 
+        // Temperature to integer and decimal part
+        let t_i = meas.temperature / 100;
+        let t_d = meas.temperature.abs() - (t_i * 100);
+
+        // Humidity to integer and decimal part
+        let h_i = meas.humidity / 100;
+        let h_d = meas.humidity - (h_i * 100);
+
         // NOTE(unwrap) the formatted string must always fit the temporary buffer
         writeln!(
             &mut tmp,
-            "{:.03},{:.02},{:.02}",
-            f32(millis) / 1e3,
-            meas.temperature,
-            meas.humidity
+            "{},{}.{:02},{}.{:02}",
+            millis / 1_000,
+            t_i,
+            t_d,
+            h_i,
+            h_d
         )
         .unwrap();
 
