@@ -10,8 +10,9 @@
 mod storage;
 mod time;
 
-use atomic::Ordering;
-use core::{panic::PanicInfo, sync::atomic};
+#[cfg(debug_assertions)]
+extern crate panic_semihosting;
+
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
 use stm32f4xx_hal::{
@@ -221,9 +222,12 @@ const APP: () = {
     }
 };
 
+#[cfg(not(debug_assertions))]
 #[inline(never)]
 #[panic_handler]
-fn panic(_: &PanicInfo) -> ! {
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    use core::sync::atomic::{self, Ordering};
+
     loop {
         atomic::compiler_fence(Ordering::SeqCst);
     }
