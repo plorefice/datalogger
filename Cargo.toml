@@ -22,10 +22,18 @@ default-features = false
 version = "0.3.1"
 features = ["dwt"]
 
+[dependencies.sntp]
+git = "https://github.com/plorefice/sntp-rs"
+
 [dependencies.stm32f4xx-hal]
 git = "https://github.com/plorefice/stm32f4xx-hal"
 branch = "sdio-fixes"
 features = ["rt", "stm32f407"]
+
+[dependencies.stm32-eth]
+git = "https://github.com/plorefice/stm32-eth"
+branch = "rework-smoltcp"
+features = ["stm32f4disco", "smoltcp-phy"]
 
 # This is honestly a bit of a hack.
 # We don't use log directly in this crate, but `embedded-sdmmc` does.

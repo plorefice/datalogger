@@ -7,6 +7,7 @@
 #![no_main]
 #![no_std]
 
+mod network;
 mod storage;
 mod time;
 
@@ -15,6 +16,8 @@ extern crate panic_semihosting;
 
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
+use network::Netlink;
+use sntp::net;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -29,7 +32,7 @@ use stm32f4xx_hal::{
     },
     rcc::RccExt,
     sdio::{ClockFreq, Sdio},
-    stm32::Interrupt,
+    stm32::{self, Interrupt},
 };
 use storage::{SdCard, Storage};
 use time::{Duration, Instant, SystemTimer};
@@ -45,6 +48,8 @@ const APP: () = {
         dht11: Dht11<PA8<Output<OpenDrain>>>,
         /// SD-backed persistent storage.
         storage: Storage<dwt::Delay>,
+        /// Networking-related data.
+        netlink: Netlink,
         /// LED indicating busy activity
         busy_led: PD13<Output<PushPull>>,
         /// LED indicating CPU activity
@@ -53,7 +58,7 @@ const APP: () = {
         sync_btn: PA0<Input<Floating>>,
     }
 
-    #[init(schedule = [sensor_reading, heartbeat])]
+    #[init(schedule = [sensor_reading, heartbeat, netlink_loop])]
     fn init(mut cx: init::Context) -> init::LateResources {
         use stm32f4xx_hal::time::U32Ext;
 
@@ -68,6 +73,7 @@ const APP: () = {
         let clk = SystemTimer::init(cx.device.TIM2, clocks);
 
         let gpioa = cx.device.GPIOA.split();
+        let gpiob = cx.device.GPIOB.split();
         let gpioc = cx.device.GPIOC.split();
         let gpiod = cx.device.GPIOD.split();
 
@@ -110,15 +116,35 @@ const APP: () = {
         // Create and initialize an SD-backed storage
         let storage = Storage::new(SdCard::new(sdio, dwt.delay())).unwrap();
 
+        // Create ethernet device and SNTP client
+        let netlink = network::setup(
+            cx.device.SYSCFG,
+            (
+                gpioa.pa1.into_alternate_af11(),
+                gpioa.pa2.into_alternate_af11(),
+                gpioa.pa7.into_alternate_af11(),
+                gpiob.pb11.into_alternate_af11(),
+                gpiob.pb12.into_alternate_af11(),
+                gpiob.pb13.into_alternate_af11(),
+                gpioc.pc1.into_alternate_af11(),
+                gpioc.pc4.into_alternate_af11(),
+                gpioc.pc5.into_alternate_af11(),
+            ),
+            cx.device.ETHERNET_MAC,
+            cx.device.ETHERNET_DMA,
+        );
+
         // Schedule periodic tasks
         cx.schedule.sensor_reading(cx.start).unwrap();
         cx.schedule.heartbeat(cx.start).unwrap();
+        cx.schedule.netlink_loop(cx.start).unwrap();
 
         init::LateResources {
             dwt,
             clk,
             dht11,
             storage,
+            netlink,
             busy_led,
             heartbeat_led,
             sync_btn,
@@ -195,6 +221,41 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
+    #[task(schedule = [netlink_loop], resources = [netlink])]
+    fn netlink_loop(mut cx: netlink_loop::Context) {
+        let Netlink {
+            iface,
+            sockets,
+            sntp,
+        } = &mut cx.resources.netlink;
+
+        // Current instant in smolctp time
+        let timestamp = net::time::Instant::from_millis(
+            Instant::now().duration_since(Instant::zero()).as_millis() as i64,
+        );
+
+        // Poll socket interface
+        iface.poll(sockets, timestamp).map(|_| ()).ok();
+
+        // Process SNTP requests
+        // TODO: implement and set system time.
+        let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
+        if let Some(_t) = network_time {
+            cortex_m::asm::bkpt();
+        }
+
+        // Compute how long we can sleep
+        let mut timeout = sntp.next_poll(timestamp);
+        iface
+            .poll_delay(&sockets, timestamp)
+            .map(|sockets_timeout| timeout = sockets_timeout);
+
+        // Sleep until next scheduled activation or until the ETH interrupt wakes us
+        cx.schedule
+            .netlink_loop(cx.scheduled + Duration::from_millis(timeout.millis() as u32))
+            .ok();
+    }
+
     /// Low-priority background task that blinks the heartbeat led.
     #[task(schedule = [heartbeat], resources = [heartbeat_led], priority = 1)]
     fn heartbeat(cx: heartbeat::Context) {
@@ -207,6 +268,18 @@ const APP: () = {
 
         cx.resources.heartbeat_led.toggle().unwrap();
         *I = (*I + 1) % DELAY_PATTERN.len();
+    }
+
+    /// Interrupt from the network interface. Runs at the second highest priority.
+    #[task(binds = ETH, spawn = [netlink_loop], priority = 14)]
+    fn ethernet_rx(cx: ethernet_rx::Context) {
+        // Clear interrupt flags
+        // TODO: use the safe API to access this peripheral
+        let p = unsafe { stm32::Peripherals::steal() };
+        stm32_eth::eth_interrupt_handler(&p.ETHERNET_DMA);
+
+        // Spawn netlink loop to handle the packet
+        cx.spawn.netlink_loop().ok();
     }
 
     /// Interrupt from the system timer. Runs at the highest priority.
