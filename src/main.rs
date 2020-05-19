@@ -161,7 +161,7 @@ const APP: () = {
     /// and schedules the data to be backed up to the persistent storage.
     #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11], priority = 2)]
     fn sensor_reading(cx: sensor_reading::Context) {
-        static READING_PERIOD: u32 = 60_000; // 1 minute
+        static READING_PERIOD: u32 = 10 * 60; // 10 minutes
 
         let sensor_reading::Resources { mut dwt, dht11 } = cx.resources;
 
@@ -172,7 +172,7 @@ const APP: () = {
         }
 
         cx.schedule
-            .sensor_reading(cx.scheduled + Duration::from_millis(READING_PERIOD))
+            .sensor_reading(cx.scheduled + Duration::from_secs(READING_PERIOD))
             .unwrap();
     }
 
