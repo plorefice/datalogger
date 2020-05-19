@@ -34,7 +34,7 @@ type PINS = (
 );
 
 // Network access details
-const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 2];
+const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 20];
 const IPV4_GATEWAY: [u8; 4] = [192, 168, 2, 1];
 const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 

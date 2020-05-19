@@ -59,6 +59,9 @@ const APP: () = {
         ntp_sync_led: PD15<Output<PushPull>>,
         /// Push-button used to sync data to disk
         sync_btn: PA0<Input<Floating>>,
+        /// Whether or not the wall clock is network synced.
+        #[init(false)]
+        ntp_synced: bool,
     }
 
     #[init(schedule = [sensor_reading, heartbeat, netlink_loop])]
@@ -159,16 +162,23 @@ const APP: () = {
 
     /// Periodic software task which reads temperature and humidity data from the DHT11
     /// and schedules the data to be backed up to the persistent storage.
-    #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11], priority = 2)]
+    #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11, ntp_synced], priority = 2)]
     fn sensor_reading(cx: sensor_reading::Context) {
         static READING_PERIOD: u32 = 10 * 60; // 10 minutes
 
-        let sensor_reading::Resources { mut dwt, dht11 } = cx.resources;
+        let sensor_reading::Resources {
+            mut dwt,
+            dht11,
+            ntp_synced,
+        } = cx.resources;
 
         let mut dly = dwt.lock(|dwt| dwt.delay());
 
-        if let Ok(meas) = dht11.perform_measurement(&mut dly) {
-            cx.spawn.save_data(meas).unwrap();
+        if *ntp_synced {
+            // Read data only if time is synced
+            if let Ok(meas) = dht11.perform_measurement(&mut dly) {
+                cx.spawn.save_data(meas).unwrap();
+            }
         }
 
         cx.schedule
@@ -227,9 +237,10 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
-    #[task(schedule = [netlink_loop], resources = [netlink, ntp_sync_led])]
+    #[task(schedule = [netlink_loop], resources = [netlink, ntp_synced, ntp_sync_led])]
     fn netlink_loop(mut cx: netlink_loop::Context) {
         let led = cx.resources.ntp_sync_led;
+        let mut synced = cx.resources.ntp_synced;
 
         // Current instant in smolctp time
         let timestamp = net::time::Instant::from_millis(
@@ -253,6 +264,7 @@ const APP: () = {
                 if let Some(time) = network_time {
                     // `time` is in seconds, to convert it to millis
                     SystemTime::adjust(u64(time) * 1_000);
+                    synced.lock(|sync| *sync = true);
                     led.set_high().unwrap();
                 }
 
