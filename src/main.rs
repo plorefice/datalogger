@@ -23,7 +23,7 @@ use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
         gpioa::{PA0, PA8},
-        gpiod::{PD12, PD13},
+        gpiod::{PD12, PD13, PD15},
         Edge, ExtiPin, Floating, GpioExt, Input, OpenDrain, Output, PushPull,
         Speed::VeryHigh,
     },
@@ -55,6 +55,8 @@ const APP: () = {
         busy_led: PD13<Output<PushPull>>,
         /// LED indicating CPU activity
         heartbeat_led: PD12<Output<PushPull>>,
+        /// LED indicating that the wall clock is NTP-synced.
+        ntp_sync_led: PD15<Output<PushPull>>,
         /// Push-button used to sync data to disk
         sync_btn: PA0<Input<Floating>>,
     }
@@ -83,9 +85,11 @@ const APP: () = {
 
         // Create led instances
         let mut heartbeat_led = gpiod.pd12.into_push_pull_output();
+        let mut ntp_sync_led = gpiod.pd15.into_push_pull_output();
         let mut busy_led = gpiod.pd13.into_push_pull_output();
 
         heartbeat_led.set_low().unwrap();
+        ntp_sync_led.set_low().unwrap();
         busy_led.set_low().unwrap();
 
         // Create user button
@@ -148,6 +152,7 @@ const APP: () = {
             netlink,
             busy_led,
             heartbeat_led,
+            ntp_sync_led,
             sync_btn,
         }
     }
@@ -222,8 +227,10 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
-    #[task(schedule = [netlink_loop], resources = [netlink])]
+    #[task(schedule = [netlink_loop], resources = [netlink, ntp_sync_led])]
     fn netlink_loop(mut cx: netlink_loop::Context) {
+        let led = cx.resources.ntp_sync_led;
+
         // Current instant in smolctp time
         let timestamp = net::time::Instant::from_millis(
             Instant::now().duration_since(Instant::zero()).as_millis() as i64,
@@ -246,6 +253,7 @@ const APP: () = {
                 if let Some(time) = network_time {
                     // `time` is in seconds, to convert it to millis
                     SystemTime::adjust(u64(time) * 1_000);
+                    led.set_high().unwrap();
                 }
 
                 // Compute how long we can sleep
