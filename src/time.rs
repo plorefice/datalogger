@@ -1,12 +1,16 @@
 use cast::{i64, u32, u64};
 use core::{
+    cell::RefCell,
     cmp,
     convert::{Infallible, TryInto},
     fmt, ops,
     sync::atomic::{AtomicU32, Ordering},
     time,
 };
-use cortex_m::peripheral::NVIC;
+use cortex_m::{
+    interrupt::{self, Mutex},
+    peripheral::NVIC,
+};
 use stm32f4xx_hal::{
     rcc::Clocks,
     stm32::{Interrupt, TIM2},
@@ -16,6 +20,9 @@ use stm32f4xx_hal::{
 
 /// Current monotonic time expressed in milliseconds.
 static TICK: AtomicU32 = AtomicU32::new(0);
+
+/// System wall clock backing storage.
+static CLOCK: Mutex<RefCell<u64>> = Mutex::new(RefCell::new(0));
 
 /// A measurement of a monotonically nondecreasing clock. Opaque and useful only with `Duration`.
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -104,6 +111,36 @@ impl Ord for Instant {
 impl PartialOrd for Instant {
     fn partial_cmp(&self, rhs: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(rhs))
+    }
+}
+
+/// A measurement of the system clock, useful for talking to external entities
+/// like the file system or other processes.
+///
+/// Counterpart of [`SystemTime`] present in the Standard Library.
+///
+/// [`SystemTime`]: https://doc.rust-lang.org/std/time/struct.SystemTime.html
+pub struct SystemTime {
+    inner: u64,
+}
+
+impl SystemTime {
+    /// Returns the system time corresponding to "now".
+    pub fn now() -> Self {
+        Self {
+            inner: interrupt::free(|cs| *CLOCK.borrow(cs).borrow()),
+        }
+    }
+
+    /// Ticks the system wall clock by one millisecond.
+    pub fn tick() {
+        interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() += 1);
+    }
+
+    /// Sets the system wall clock to the specified `time`, espressed in **milliseconds**
+    /// since the Unix epoch.
+    pub fn adjust(time: u64) {
+        interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() = time);
     }
 }
 

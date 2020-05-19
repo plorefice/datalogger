@@ -14,6 +14,7 @@ mod time;
 #[cfg(debug_assertions)]
 extern crate panic_semihosting;
 
+use cast::u64;
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
 use network::Netlink;
@@ -35,7 +36,7 @@ use stm32f4xx_hal::{
     stm32::{self, Interrupt},
 };
 use storage::{SdCard, Storage};
-use time::{Duration, Instant, Ticker};
+use time::{Duration, Instant, SystemTime, Ticker};
 
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::Ticker)]
 const APP: () = {
@@ -238,10 +239,10 @@ const APP: () = {
         iface.poll(sockets, timestamp).map(|_| ()).ok();
 
         // Process SNTP requests
-        // TODO: implement and set system time.
         let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
-        if let Some(_t) = network_time {
-            cortex_m::asm::bkpt();
+        if let Some(time) = network_time {
+            // `time` is in seconds, to convert it to millis
+            SystemTime::adjust(u64(time) * 1_000);
         }
 
         // Compute how long we can sleep
@@ -286,6 +287,7 @@ const APP: () = {
     #[task(binds = TIM2, resources = [clk], priority = 15)]
     fn system_timer(cx: system_timer::Context) {
         cx.resources.clk.tick();
+        SystemTime::tick();
     }
 
     // Unused interrupts to dispatch software tasks
