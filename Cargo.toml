@@ -27,11 +27,7 @@ git = "https://github.com/plorefice/stm32-eth"
 branch = "rework-smoltcp"
 features = ["stm32f4disco", "smoltcp-phy"]
 
-# This is honestly a bit of a hack.
-# We don't use log directly in this crate, but `embedded-sdmmc` does.
-# We need to enable the `release_max_level_off` feature, otherwise the log strings
-# will not be stripped away from the final binary, even when not used (for whatever reason).
-# This little trick literally slashes the binary size in half (33K -> 17K last time I tried).
+# Strip logs in release mode
 [dependencies.log]
 version = "0.4"
 features = ["release_max_level_off"]
