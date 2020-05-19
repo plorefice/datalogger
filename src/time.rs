@@ -120,6 +120,7 @@ impl PartialOrd for Instant {
 /// Counterpart of [`SystemTime`] present in the Standard Library.
 ///
 /// [`SystemTime`]: https://doc.rust-lang.org/std/time/struct.SystemTime.html
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SystemTime {
     inner: u64,
 }
@@ -132,6 +133,11 @@ impl SystemTime {
         }
     }
 
+    /// Returns this system time expressed in seconds since Unix epoch.
+    pub fn as_secs(&self) -> u64 {
+        self.inner / 1_000
+    }
+
     /// Ticks the system wall clock by one millisecond.
     pub fn tick() {
         interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() += 1);
@@ -141,6 +147,12 @@ impl SystemTime {
     /// since the Unix epoch.
     pub fn adjust(time: u64) {
         interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() = time);
+    }
+}
+
+impl fmt::Debug for SystemTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SystemTime").field(&self.inner).finish()
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::time::Instant;
+use crate::time::SystemTime;
 use core::{cell::RefCell, fmt::Write};
 use dht11::Measurement;
 use embedded_sdmmc::{
@@ -109,11 +109,9 @@ impl<D: DelayMs<u8>> Storage<D> {
     pub fn save_measurement(
         &mut self,
         meas: Measurement,
-        acquisition_time: Instant,
+        acquisition_time: SystemTime,
     ) -> Result<(), embedded_sdmmc::Error<sdio::Error>> {
         let mut tmp = String::<U32>::new();
-
-        let millis = acquisition_time.duration_since(Instant::zero()).as_millis();
 
         // Temperature to integer and decimal part
         let t_i = meas.temperature / 10;
@@ -127,7 +125,7 @@ impl<D: DelayMs<u8>> Storage<D> {
         writeln!(
             &mut tmp,
             "{},{}.{:01},{}.{:01}",
-            millis / 1_000,
+            acquisition_time.as_secs(),
             t_i,
             t_d,
             h_i,

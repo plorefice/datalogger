@@ -181,7 +181,7 @@ const APP: () = {
         } = cx.resources;
 
         let mut dly = dwt.lock(|dwt| dwt.delay());
-        let acquisition_time = Instant::now();
+        let acquisition_time = SystemTime::now();
 
         busy_led.set_high().unwrap();
 
