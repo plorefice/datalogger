@@ -14,10 +14,10 @@ use stm32f4xx_hal::{
     timer::{Event, Timer},
 };
 
-/// Current time expressed in milliseconds.
-static NOW: AtomicU32 = AtomicU32::new(0);
+/// Current monotonic time expressed in milliseconds.
+static TICK: AtomicU32 = AtomicU32::new(0);
 
-/// A measurement of the amount of time elapsed since an arbitrary start.
+/// A measurement of a monotonically nondecreasing clock. Opaque and useful only with `Duration`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Instant {
     inner: i64,
@@ -27,7 +27,7 @@ impl Instant {
     /// Returns an instant corresponding to "now".
     pub fn now() -> Self {
         Instant {
-            inner: i64(NOW.load(Ordering::Acquire)),
+            inner: i64(TICK.load(Ordering::Acquire)),
         }
     }
 
@@ -107,7 +107,7 @@ impl PartialOrd for Instant {
     }
 }
 
-/// A `Duration` type to represent a span of time.
+/// A `Duration` type to represent a span of time, typically used for system timeouts.
 #[derive(Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Duration {
     inner: time::Duration,
@@ -121,7 +121,7 @@ impl Duration {
         }
     }
 
-    /// Returns the total number of whole milliseconds contained by this Duration.
+    /// Returns the total number of whole milliseconds contained by this `Duration`.
     pub fn as_millis(self) -> u64 {
         self.inner.as_millis() as u64
     }
@@ -168,12 +168,12 @@ impl ops::Sub<Duration> for Duration {
 }
 
 /// Implementation of the `Monotonic` trait based on a hardware timer with millisecond precision.
-pub struct SystemTimer {
+pub struct Ticker {
     inner: Timer<TIM2>,
 }
 
-impl SystemTimer {
-    /// Initializes the system timer.
+impl Ticker {
+    /// Initializes the ticker to use the TIM2 peripheral under the hood.
     pub fn init(tim: TIM2, clocks: Clocks) -> Self {
         // NOTE(unsafe) we are not in an interrupt context
         unsafe { NVIC::unmask(Interrupt::TIM2) };
@@ -184,14 +184,14 @@ impl SystemTimer {
         Self { inner }
     }
 
-    /// Ticks the system timer, increasing the current time by one millisecond.
+    /// Ticks the internal timer, increasing the current monotonic time by one millisecond.
     pub fn tick(&mut self) {
         self.inner.clear_interrupt(Event::TimeOut);
-        NOW.fetch_add(1, Ordering::Release);
+        TICK.fetch_add(1, Ordering::Release);
     }
 }
 
-impl rtfm::Monotonic for SystemTimer {
+impl rtfm::Monotonic for Ticker {
     type Instant = Instant;
 
     fn ratio() -> rtfm::Fraction {
@@ -206,7 +206,7 @@ impl rtfm::Monotonic for SystemTimer {
     }
 
     unsafe fn reset() {
-        NOW.store(0, Ordering::Release);
+        TICK.store(0, Ordering::Release);
     }
 
     fn zero() -> Self::Instant {

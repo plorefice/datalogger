@@ -35,15 +35,15 @@ use stm32f4xx_hal::{
     stm32::{self, Interrupt},
 };
 use storage::{SdCard, Storage};
-use time::{Duration, Instant, SystemTimer};
+use time::{Duration, Instant, Ticker};
 
-#[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::SystemTimer)]
+#[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::Ticker)]
 const APP: () = {
     struct Resources {
         /// A `Copy`able delay provider based on DWT.
         dwt: Dwt,
         /// System clock.
-        clk: SystemTimer,
+        clk: Ticker,
         /// DHT11 sensor instance.
         dht11: Dht11<PA8<Output<OpenDrain>>>,
         /// SD-backed persistent storage.
@@ -70,7 +70,7 @@ const APP: () = {
         let dwt = cx.core.DWT.constrain(cx.core.DCB, clocks);
 
         // Use TIM2 as monotonic clock provider
-        let clk = SystemTimer::init(cx.device.TIM2, clocks);
+        let clk = Ticker::init(cx.device.TIM2, clocks);
 
         let gpioa = cx.device.GPIOA.split();
         let gpiob = cx.device.GPIOB.split();
