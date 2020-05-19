@@ -76,6 +76,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     pins.8.set_speed(VeryHigh);
 
     // Configure Ethernet peripheral
+    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let eth = {
         static mut RX_RING: MaybeUninit<[RingEntry<RxDescriptor>; 8]> = MaybeUninit::uninit();
         static mut TX_RING: MaybeUninit<[RingEntry<TxDescriptor>; 2]> = MaybeUninit::uninit();
@@ -97,6 +98,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     eth.enable_interrupt();
 
     // Create smoltcp interface
+    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let iface = {
         let ethernet_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
 
@@ -129,12 +131,14 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     };
 
     // Create socket set
+    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let mut sockets = unsafe {
         static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 1] = [None; 1];
         SocketSet::new(&mut SOCKET_ENTRIES[..])
     };
 
     // Create SNTP client
+    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let sntp = {
         let sntp_rx_buffer = unsafe {
             static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
