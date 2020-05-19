@@ -383,7 +383,7 @@ dependencies = [
 [[package]]
 name = "stm32f4xx-hal"
 version = "0.8.1"
-source = "git+https://github.com/plorefice/stm32f4xx-hal?branch=sdio-fixes#6ce50ed39a261724b110ec33756fc4ba9039b717"
+source = "git+https://github.com/plorefice/stm32f4xx-hal?branch=sdio-fixes#fc63dc16a7760bc35b078e38a75d4a0e18c69a6c"
 dependencies = [
  "bare-metal",
  "cast",
