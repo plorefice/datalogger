@@ -33,6 +33,11 @@ type PINS = (
     PC5<Alternate<AF11>>,
 );
 
+// Network access details
+const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 2];
+const IPV4_GATEWAY: [u8; 4] = [192, 168, 2, 1];
+const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
+
 /// Container for all the network resources.
 /// TODO: refactor this ugly interface.
 pub struct Netlink {
@@ -109,9 +114,10 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
 
         static mut IP_ADDRESS: MaybeUninit<[IpCidr; 1]> = MaybeUninit::uninit();
         unsafe {
-            IP_ADDRESS
-                .as_mut_ptr()
-                .write([IpCidr::new(IpAddress::v4(192, 168, 2, 2), 24)]);
+            IP_ADDRESS.as_mut_ptr().write([IpCidr::new(
+                Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
+                24,
+            )]);
         }
 
         let mut routes = {
@@ -119,8 +125,9 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
             Routes::new(unsafe { &mut ROUTES_STORAGE[..] })
         };
 
-        let default_v4_gw = Ipv4Address::new(192, 168, 2, 1);
-        routes.add_default_ipv4_route(default_v4_gw).unwrap();
+        routes
+            .add_default_ipv4_route(Ipv4Address::from_bytes(&IPV4_GATEWAY[..]).into())
+            .unwrap();
 
         EthernetInterfaceBuilder::new(eth)
             .ethernet_addr(ethernet_addr)
@@ -152,13 +159,11 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
             UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
         };
 
-        let server = IpAddress::v4(62, 112, 134, 4);
-
         Client::new(
             &mut sockets,
             sntp_rx_buffer,
             sntp_tx_buffer,
-            server,
+            Ipv4Address::from_bytes(&SNTP_SERVER_ADDR[..]).into(),
             Instant::from_secs(0),
         )
     };
