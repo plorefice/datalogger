@@ -170,6 +170,11 @@ impl Duration {
         }
     }
 
+    /// Creates a new `Duration` from the specified number of seconds.
+    pub fn from_secs(s: u32) -> Self {
+        Self::from_millis(s * 1_000)
+    }
+
     /// Returns the total number of whole milliseconds contained by this `Duration`.
     pub fn as_millis(self) -> u64 {
         self.inner.as_millis() as u64
