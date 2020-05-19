@@ -165,6 +165,7 @@ const APP: () = {
     #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11, ntp_synced], priority = 2)]
     fn sensor_reading(cx: sensor_reading::Context) {
         static READING_PERIOD: u32 = 10 * 60; // 10 minutes
+        static RETRY_PERIOD: u32 = 10; // 10 seconds
 
         let sensor_reading::Resources {
             mut dwt,
@@ -174,15 +175,20 @@ const APP: () = {
 
         let mut dly = dwt.lock(|dwt| dwt.delay());
 
-        if *ntp_synced {
-            // Read data only if time is synced
+        // Perform reading or schedule a retry
+        let next_reading = if *ntp_synced {
             if let Ok(meas) = dht11.perform_measurement(&mut dly) {
                 cx.spawn.save_data(meas).unwrap();
+                Duration::from_secs(READING_PERIOD)
+            } else {
+                Duration::from_secs(RETRY_PERIOD)
             }
-        }
+        } else {
+            Duration::from_secs(RETRY_PERIOD)
+        };
 
         cx.schedule
-            .sensor_reading(cx.scheduled + Duration::from_secs(READING_PERIOD))
+            .sensor_reading(cx.scheduled + next_reading)
             .unwrap();
     }
 
