@@ -337,7 +337,6 @@ checksum = "0fe46639fd2ec79eadf8fe719f237a7a0bd4dac5d957f1ca5bbdbc1c3c39e53a"
 dependencies = [
  "bitflags",
  "byteorder",
- "log",
  "managed",
 ]
 
@@ -360,7 +359,7 @@ checksum = "dba1a27d3efae4351c8051072d619e3ade2820635c3958d826bfea39d59b54c8"
 [[package]]
 name = "stm32-eth"
 version = "0.1.2"
-source = "git+https://github.com/plorefice/stm32-eth?branch=rework-smoltcp#6479520967f28021ab3758fdddb0086e5ea32cf3"
+source = "git+https://github.com/plorefice/stm32-eth?branch=rework-smoltcp#401d9fd1fda0907c2427c07c882c6ee512972934"
 dependencies = [
  "aligned",
  "log",
@@ -384,7 +383,7 @@ dependencies = [
 [[package]]
 name = "stm32f4xx-hal"
 version = "0.8.1"
-source = "git+https://github.com/stm32-rs/stm32f4xx-hal#5dcbbdf1fea4906fc78ac302ab610194e22f30bb"
+source = "git+https://github.com/stm32-rs/stm32f4xx-hal#7b619fa3fc2db0a07ecbc5c447a98b6dde21c767"
 dependencies = [
  "bare-metal",
  "cast",
