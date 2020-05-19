@@ -33,7 +33,7 @@ use stm32f4xx_hal::{
     },
     rcc::RccExt,
     sdio::{ClockFreq, Sdio},
-    stm32::{self, Interrupt},
+    stm32::Interrupt,
 };
 use storage::{SdCard, Storage};
 use time::{Duration, Instant, SystemTime, Ticker};
@@ -224,32 +224,39 @@ const APP: () = {
 
     #[task(schedule = [netlink_loop], resources = [netlink])]
     fn netlink_loop(mut cx: netlink_loop::Context) {
-        let Netlink {
-            iface,
-            sockets,
-            sntp,
-        } = &mut cx.resources.netlink;
-
         // Current instant in smolctp time
         let timestamp = net::time::Instant::from_millis(
             Instant::now().duration_since(Instant::zero()).as_millis() as i64,
         );
 
-        // Poll socket interface
-        iface.poll(sockets, timestamp).map(|_| ()).ok();
+        // Run the network loop.
+        // This runs in a critical section shared with the ethernet interrupt,
+        // so we need to verify that this does not cause problems like packet loss.
+        let timeout = cx.resources.netlink.lock(
+            |Netlink {
+                 iface,
+                 sockets,
+                 sntp,
+             }| {
+                // Poll socket interface
+                iface.poll(sockets, timestamp).map(|_| ()).ok();
 
-        // Process SNTP requests
-        let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
-        if let Some(time) = network_time {
-            // `time` is in seconds, to convert it to millis
-            SystemTime::adjust(u64(time) * 1_000);
-        }
+                // Process SNTP requests
+                let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
+                if let Some(time) = network_time {
+                    // `time` is in seconds, to convert it to millis
+                    SystemTime::adjust(u64(time) * 1_000);
+                }
 
-        // Compute how long we can sleep
-        let mut timeout = sntp.next_poll(timestamp);
-        iface
-            .poll_delay(&sockets, timestamp)
-            .map(|sockets_timeout| timeout = sockets_timeout);
+                // Compute how long we can sleep
+                let mut timeout = sntp.next_poll(timestamp);
+                iface
+                    .poll_delay(&sockets, timestamp)
+                    .map(|sockets_timeout| timeout = sockets_timeout);
+
+                timeout
+            },
+        );
 
         // Sleep until next scheduled activation or until the ETH interrupt wakes us
         cx.schedule
@@ -272,12 +279,10 @@ const APP: () = {
     }
 
     /// Interrupt from the network interface. Runs at the second highest priority.
-    #[task(binds = ETH, spawn = [netlink_loop], priority = 14)]
+    #[task(binds = ETH, spawn = [netlink_loop], resources = [netlink], priority = 14)]
     fn ethernet_rx(cx: ethernet_rx::Context) {
         // Clear interrupt flags
-        // TODO: use the safe API to access this peripheral
-        let p = unsafe { stm32::Peripherals::steal() };
-        stm32_eth::eth_interrupt_handler(&p.ETHERNET_DMA);
+        cx.resources.netlink.iface.device().interrupt_handler();
 
         // Spawn netlink loop to handle the packet
         cx.spawn.netlink_loop().ok();
