@@ -343,9 +343,9 @@ dependencies = [
 
 [[package]]
 name = "sntp"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e42538abc09c4d1f99bc9ef4a4499d451f2edb19b1cc570dedede5d2945dcd67"
+checksum = "3a26f124286da8d72110e0010626f5199e83c05e6a82a745584965620cfb0a3d"
 dependencies = [
  "byteorder",
  "smoltcp",
