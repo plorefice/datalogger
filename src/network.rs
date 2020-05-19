@@ -39,11 +39,10 @@ const IPV4_GATEWAY: [u8; 4] = [192, 168, 2, 1];
 const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 
 /// Container for all the network resources.
-/// TODO: refactor this ugly interface.
-pub struct Netlink {
-    pub(crate) iface: EthernetInterface<'static, 'static, 'static, Eth<'static, 'static>>,
-    pub(crate) sntp: Client,
-    pub(crate) sockets: SocketSet<'static, 'static, 'static>,
+pub struct Netlink<'a> {
+    pub iface: EthernetInterface<'a, 'a, 'a, Eth<'a, 'a>>,
+    pub sntp: Client,
+    pub sockets: SocketSet<'a, 'a, 'a>,
 }
 
 /// Performs all the heavy lifting required to bring up the Ethernet interface
@@ -51,7 +50,7 @@ pub struct Netlink {
 ///
 /// Every single buffer allocated by this function is static, meaning that it won't be
 /// stack-allocated. This is good, because we can catch OOM conditions during compilation.
-pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -> Netlink {
+pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -> Netlink<'static> {
     // Initialize ethernet MAC
     {
         let rcc = unsafe { &*RCC::ptr() };

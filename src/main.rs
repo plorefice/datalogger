@@ -50,7 +50,7 @@ const APP: () = {
         /// SD-backed persistent storage.
         storage: Storage<dwt::Delay>,
         /// Networking-related data.
-        netlink: Netlink,
+        netlink: Netlink<'static>,
         /// LED indicating busy activity
         busy_led: PD13<Output<PushPull>>,
         /// LED indicating CPU activity
