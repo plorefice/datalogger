@@ -143,7 +143,7 @@ dependencies = [
  "panic-semihosting",
  "sntp",
  "stm32-eth",
- "stm32f4xx-hal 0.8.1 (git+https://github.com/plorefice/stm32f4xx-hal?branch=sdio-fixes)",
+ "stm32f4xx-hal 0.8.1 (git+https://github.com/stm32-rs/stm32f4xx-hal)",
  "typenum",
 ]
 
@@ -344,7 +344,8 @@ dependencies = [
 [[package]]
 name = "sntp"
 version = "0.1.0"
-source = "git+https://github.com/plorefice/sntp-rs#3bf2cf3a1e620ed61932054ca9d0a9446911794a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e42538abc09c4d1f99bc9ef4a4499d451f2edb19b1cc570dedede5d2945dcd67"
 dependencies = [
  "byteorder",
  "smoltcp",
@@ -383,7 +384,7 @@ dependencies = [
 [[package]]
 name = "stm32f4xx-hal"
 version = "0.8.1"
-source = "git+https://github.com/plorefice/stm32f4xx-hal?branch=sdio-fixes#fc63dc16a7760bc35b078e38a75d4a0e18c69a6c"
+source = "git+https://github.com/stm32-rs/stm32f4xx-hal#5dcbbdf1fea4906fc78ac302ab610194e22f30bb"
 dependencies = [
  "bare-metal",
  "cast",
