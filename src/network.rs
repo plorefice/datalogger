@@ -1,12 +1,12 @@
 use core::mem::MaybeUninit;
-use sntp::{
+use smolapps::{
     net::iface::{
         EthernetInterface, EthernetInterfaceBuilder, Neighbor, NeighborCache, Route, Routes,
     },
     net::socket::{SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocketBuffer},
     net::time::Instant,
     net::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address},
-    Client,
+    sntp::Client,
 };
 use stm32_eth::{Eth, RingEntry, RxDescriptor, TxDescriptor};
 use stm32f4xx_hal::{

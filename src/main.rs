@@ -18,7 +18,7 @@ use cast::u64;
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
 use network::Netlink;
-use sntp::net;
+use smolapps::net;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{

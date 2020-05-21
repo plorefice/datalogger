@@ -141,7 +141,7 @@ dependencies = [
  "heapless",
  "log",
  "panic-semihosting",
- "sntp",
+ "smolapps",
  "stm32-eth",
  "stm32f4xx-hal 0.8.1 (git+https://github.com/stm32-rs/stm32f4xx-hal)",
  "typenum",
@@ -330,6 +330,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
+name = "smolapps"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fa0394c19b404498faa0ed9245ce7075e8752a4751a9e085be80bc6b4442d51"
+dependencies = [
+ "byteorder",
+ "smoltcp",
+]
+
+[[package]]
 name = "smoltcp"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,16 +348,6 @@ dependencies = [
  "bitflags",
  "byteorder",
  "managed",
-]
-
-[[package]]
-name = "sntp"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a26f124286da8d72110e0010626f5199e83c05e6a82a745584965620cfb0a3d"
-dependencies = [
- "byteorder",
- "smoltcp",
 ]
 
 [[package]]
