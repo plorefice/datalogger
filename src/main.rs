@@ -17,8 +17,9 @@ extern crate panic_semihosting;
 use cast::u64;
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
+use managed::ManagedSlice;
 use network::Netlink;
-use smolapps::net;
+use smolapps::tftp::Transfer;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -35,7 +36,7 @@ use stm32f4xx_hal::{
     sdio::{ClockFreq, Sdio},
     stm32::Interrupt,
 };
-use storage::{SdCard, Storage};
+use storage::{FileHandle, SdCard, Storage};
 use time::{Duration, Instant, SystemTime, Ticker};
 
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::Ticker)]
@@ -162,7 +163,12 @@ const APP: () = {
 
     /// Periodic software task which reads temperature and humidity data from the DHT11
     /// and schedules the data to be backed up to the persistent storage.
-    #[task(schedule = [sensor_reading], spawn = [save_data], resources = [dwt, dht11, ntp_synced], priority = 2)]
+    #[task(
+        priority = 3,
+        spawn = [save_data],
+        schedule = [sensor_reading],
+        resources = [dwt, dht11, ntp_synced]
+    )]
     fn sensor_reading(cx: sensor_reading::Context) {
         static READING_PERIOD: u32 = 10 * 60; // 10 minutes
         static RETRY_PERIOD: u32 = 10; // 10 seconds
@@ -193,7 +199,10 @@ const APP: () = {
     }
 
     /// Software task spawned whenever new data needs to be saved.
-    #[task(resources = [dwt, storage, busy_led], priority = 2)]
+    #[task(
+        priority = 3,
+        resources = [dwt, storage, busy_led]
+    )]
     fn save_data(cx: save_data::Context, meas: Measurement) {
         let save_data::Resources {
             mut storage,
@@ -218,7 +227,11 @@ const APP: () = {
     }
 
     /// Flush buffered data to disk.
-    #[task(binds = EXTI0, resources = [sync_btn, storage, dwt], priority = 3)]
+    #[task(
+        binds = EXTI0,
+        priority = 4,
+        resources = [sync_btn, storage, dwt]
+    )]
     fn sync_data(cx: sync_data::Context) {
         static mut LAST_SYNC_TIME: Instant = Instant::zero();
 
@@ -243,24 +256,34 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
-    #[task(schedule = [netlink_loop], resources = [netlink, ntp_synced, ntp_sync_led])]
-    fn netlink_loop(mut cx: netlink_loop::Context) {
-        let led = cx.resources.ntp_sync_led;
-        let mut synced = cx.resources.ntp_synced;
+    // Run the network loop.
+    #[task(
+        capacity = 2,
+        priority = 2,
+        schedule = [netlink_loop],
+        resources = [netlink, storage, ntp_synced, ntp_sync_led]
+    )]
+    fn netlink_loop(cx: netlink_loop::Context) {
+        static mut TRANSFERS: [Option<Transfer<FileHandle<dwt::Delay>>>; 1] = [None; 1];
+
+        let netlink_loop::Resources {
+            mut netlink,
+            mut storage,
+            mut ntp_synced,
+            ntp_sync_led,
+        } = cx.resources;
 
         // Current instant in smolctp time
-        let timestamp = net::time::Instant::from_millis(
-            Instant::now().duration_since(Instant::zero()).as_millis() as i64,
-        );
+        let timestamp = Instant::now().into();
 
-        // Run the network loop.
         // This runs in a critical section shared with the ethernet interrupt,
         // so we need to verify that this does not cause problems like packet loss.
-        let timeout = cx.resources.netlink.lock(
+        let timeout = netlink.lock(
             |Netlink {
                  iface,
                  sockets,
                  sntp,
+                 tftp,
              }| {
                 // Poll socket interface
                 iface.poll(sockets, timestamp).map(|_| ()).ok();
@@ -270,28 +293,42 @@ const APP: () = {
                 if let Some(time) = network_time {
                     // `time` is in seconds, to convert it to millis
                     SystemTime::adjust(u64(time) * 1_000);
-                    synced.lock(|sync| *sync = true);
-                    led.set_high().unwrap();
+                    ntp_synced.lock(|sync| *sync = true);
+                    ntp_sync_led.set_high().unwrap();
                 }
 
+                // Process TFTP transfers
+                storage.lock(|storage| {
+                    tftp.serve(
+                        sockets,
+                        &mut *storage,
+                        &mut ManagedSlice::Borrowed(&mut *TRANSFERS),
+                        timestamp,
+                    )
+                    .ok();
+                });
+
                 // Compute how long we can sleep
-                let mut timeout = sntp.next_poll(timestamp);
+                let mut timeout = sntp.next_poll(timestamp).min(tftp.next_poll(timestamp));
+
                 iface
                     .poll_delay(&sockets, timestamp)
-                    .map(|sockets_timeout| timeout = sockets_timeout);
+                    .map(|sockets_timeout| timeout = sockets_timeout.min(timeout));
 
                 timeout
             },
         );
 
         // Sleep until next scheduled activation or until the ETH interrupt wakes us
-        cx.schedule
-            .netlink_loop(cx.scheduled + Duration::from_millis(timeout.millis() as u32))
-            .ok();
+        cx.schedule.netlink_loop(cx.scheduled + timeout.into()).ok();
     }
 
     /// Low-priority background task that blinks the heartbeat led.
-    #[task(schedule = [heartbeat], resources = [heartbeat_led], priority = 1)]
+    #[task(
+        priority = 1,
+        schedule = [heartbeat],
+        resources = [heartbeat_led]
+    )]
     fn heartbeat(cx: heartbeat::Context) {
         static mut DELAY_PATTERN: [u32; 4] = [50, 150, 50, 1_000];
         static mut I: usize = 0;
@@ -305,17 +342,26 @@ const APP: () = {
     }
 
     /// Interrupt from the network interface. Runs at the second highest priority.
-    #[task(binds = ETH, spawn = [netlink_loop], resources = [netlink], priority = 14)]
+    #[task(
+        binds = ETH,
+        priority = 14,
+        schedule = [netlink_loop],
+        resources = [netlink]
+    )]
     fn ethernet_rx(cx: ethernet_rx::Context) {
         // Clear interrupt flags
         cx.resources.netlink.iface.device().interrupt_handler();
 
         // Spawn netlink loop to handle the packet
-        cx.spawn.netlink_loop().ok();
+        cx.schedule.netlink_loop(cx.start).ok();
     }
 
     /// Interrupt from the system timer. Runs at the highest priority.
-    #[task(binds = TIM2, resources = [clk], priority = 15)]
+    #[task(
+        binds = TIM2,
+        priority = 15,
+        resources = [clk]
+    )]
     fn system_timer(cx: system_timer::Context) {
         cx.resources.clk.tick();
         SystemTime::tick();
@@ -325,6 +371,7 @@ const APP: () = {
     extern "C" {
         fn EXTI1();
         fn EXTI2();
+        fn EXTI3();
     }
 };
 
