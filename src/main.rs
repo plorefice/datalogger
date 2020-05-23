@@ -19,7 +19,7 @@ use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
 use managed::ManagedSlice;
 use network::Netlink;
-use smolapps::{net, tftp::Transfer};
+use smolapps::tftp::Transfer;
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -256,8 +256,7 @@ const APP: () = {
         } = cx.resources;
 
         // Current instant in smolctp time
-        let timestamp =
-            net::time::Instant::from_millis((Instant::now() - Instant::zero()).as_millis() as i64);
+        let timestamp = Instant::now().into();
 
         // Run the network loop.
         // This runs in a critical section shared with the ethernet interrupt,
@@ -304,9 +303,7 @@ const APP: () = {
         );
 
         // Sleep until next scheduled activation or until the ETH interrupt wakes us
-        cx.schedule
-            .netlink_loop(cx.scheduled + Duration::from_millis(timeout.millis() as u32))
-            .ok();
+        cx.schedule.netlink_loop(cx.scheduled + timeout.into()).ok();
     }
 
     /// Low-priority background task that blinks the heartbeat led.

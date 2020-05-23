@@ -1,10 +1,10 @@
+use crate::time::Instant;
 use core::mem::MaybeUninit;
 use smolapps::{
     net::iface::{
         EthernetInterface, EthernetInterfaceBuilder, Neighbor, NeighborCache, Route, Routes,
     },
     net::socket::{SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocketBuffer},
-    net::time::Instant,
     net::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address},
     sntp, tftp,
 };
@@ -84,7 +84,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let eth = {
         static mut RX_RING: MaybeUninit<[RingEntry<RxDescriptor>; 8]> = MaybeUninit::uninit();
-        static mut TX_RING: MaybeUninit<[RingEntry<TxDescriptor>; 2]> = MaybeUninit::uninit();
+        static mut TX_RING: MaybeUninit<[RingEntry<TxDescriptor>; 4]> = MaybeUninit::uninit();
 
         unsafe {
             RX_RING.as_mut_ptr().write(Default::default());
@@ -164,7 +164,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
             sntp_rx_buffer,
             sntp_tx_buffer,
             Ipv4Address::from_bytes(&SNTP_SERVER_ADDR[..]).into(),
-            Instant::from_secs(0), // TODO: use Instant::now() here
+            Instant::now().into(),
         )
     };
 
@@ -183,7 +183,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
             UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
         };
 
-        tftp::Server::new(&mut sockets, rx_buffer, tx_buffer, Instant::from_secs(0))
+        tftp::Server::new(&mut sockets, rx_buffer, tx_buffer, Instant::now().into())
     };
 
     Netlink {

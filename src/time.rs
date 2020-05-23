@@ -11,6 +11,7 @@ use cortex_m::{
     interrupt::{self, Mutex},
     peripheral::NVIC,
 };
+use smolapps::net;
 use stm32f4xx_hal::{
     rcc::Clocks,
     stm32::{Interrupt, TIM2},
@@ -55,6 +56,12 @@ impl Instant {
     /// Returns the origin of time.
     pub const fn zero() -> Instant {
         Instant { inner: 0 }
+    }
+}
+
+impl From<Instant> for net::time::Instant {
+    fn from(i: Instant) -> Self {
+        net::time::Instant::from_millis(i.inner)
     }
 }
 
@@ -178,6 +185,12 @@ impl Duration {
     /// Returns the total number of whole milliseconds contained by this `Duration`.
     pub fn as_millis(self) -> u64 {
         self.inner.as_millis() as u64
+    }
+}
+
+impl From<net::time::Duration> for Duration {
+    fn from(d: net::time::Duration) -> Self {
+        Duration { inner: d.into() }
     }
 }
 
