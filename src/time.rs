@@ -1,4 +1,4 @@
-use cast::{i64, u32, u64};
+use cast::{i64, u32};
 use core::{
     cell::RefCell,
     cmp,
@@ -177,14 +177,14 @@ pub struct Duration {
 
 impl Duration {
     /// Creates a new `Duration` from the specified number of milliseconds.
-    pub fn from_millis(ms: u32) -> Self {
+    pub const fn from_millis(ms: u32) -> Self {
         Duration {
-            inner: time::Duration::from_millis(u64(ms)),
+            inner: time::Duration::from_millis(ms as u64),
         }
     }
 
     /// Creates a new `Duration` from the specified number of seconds.
-    pub fn from_secs(s: u32) -> Self {
+    pub const fn from_secs(s: u32) -> Self {
         Self::from_millis(s * 1_000)
     }
 
