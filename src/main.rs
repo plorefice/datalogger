@@ -15,11 +15,19 @@ mod time;
 extern crate panic_semihosting;
 
 use cast::u64;
+use core::fmt::Write;
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
+use heapless::{consts::U32, String};
 use managed::ManagedSlice;
 use network::Netlink;
-use smolapps::tftp::Transfer;
+use smolapps::{
+    net::{
+        socket::{SocketHandle, UdpSocket},
+        wire::{IpEndpoint, Ipv4Address},
+    },
+    tftp::Transfer,
+};
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -52,6 +60,8 @@ const APP: () = {
         storage: Storage<dwt::Delay>,
         /// Networking-related data.
         netlink: Netlink<'static>,
+        /// Socket used to send heartbeat messages.
+        hb_socket: SocketHandle,
         /// LED indicating busy activity
         busy_led: PD13<Output<PushPull>>,
         /// LED indicating CPU activity
@@ -126,7 +136,7 @@ const APP: () = {
         let storage = Storage::new(SdCard::new(sdio, dwt.delay())).unwrap();
 
         // Create ethernet device and SNTP client
-        let netlink = network::setup(
+        let mut netlink = network::setup(
             cx.device.SYSCFG,
             (
                 gpioa.pa1.into_alternate_af11(),
@@ -143,6 +153,9 @@ const APP: () = {
             cx.device.ETHERNET_DMA,
         );
 
+        // Create heartbeat socket
+        let hb_socket = network::create_heartbeat_socket(&mut netlink.sockets);
+
         // Schedule periodic tasks
         cx.schedule.sensor_reading(cx.start).unwrap();
         cx.schedule.heartbeat(cx.start).unwrap();
@@ -154,6 +167,7 @@ const APP: () = {
             dht11,
             storage,
             netlink,
+            hb_socket,
             busy_led,
             heartbeat_led,
             ntp_sync_led,
@@ -338,17 +352,60 @@ const APP: () = {
     #[task(
         priority = 1,
         schedule = [heartbeat],
-        resources = [heartbeat_led]
+        resources = [heartbeat_led, netlink, hb_socket]
     )]
     fn heartbeat(cx: heartbeat::Context) {
+        static mut HEARTBEAT_TIMER: Option<Instant> = None;
         static mut DELAY_PATTERN: [u32; 4] = [50, 150, 50, 1_000];
         static mut I: usize = 0;
+
+        const HEARTBEAT_PERIOD: Duration = Duration::from_secs(5);
+
+        let heartbeat::Resources {
+            mut netlink,
+            hb_socket,
+            heartbeat_led,
+        } = cx.resources;
+
+        // Send heartbeat packet
+        if HEARTBEAT_TIMER.is_none()
+            || (HEARTBEAT_TIMER.is_some() && cx.scheduled > HEARTBEAT_TIMER.unwrap())
+        {
+            let mut heartbeat = String::<U32>::new();
+
+            write!(
+                &mut heartbeat,
+                "datalogger {}.{}.{}.{}",
+                network::IPV4_ADDRESS[0],
+                network::IPV4_ADDRESS[1],
+                network::IPV4_ADDRESS[2],
+                network::IPV4_ADDRESS[3]
+            )
+            .unwrap();
+
+            netlink.lock(|netlink| {
+                netlink
+                    .sockets
+                    .get::<UdpSocket>(*hb_socket)
+                    .send_slice(
+                        heartbeat.as_str().as_bytes(),
+                        IpEndpoint {
+                            addr: Ipv4Address::BROADCAST.into(),
+                            port: 20_000,
+                        },
+                    )
+                    .unwrap();
+            });
+
+            *HEARTBEAT_TIMER = Some(cx.scheduled + HEARTBEAT_PERIOD);
+        }
 
         cx.schedule
             .heartbeat(cx.scheduled + Duration::from_millis(DELAY_PATTERN[*I]))
             .unwrap();
 
-        cx.resources.heartbeat_led.toggle().unwrap();
+        // Blink heartbeat LED
+        heartbeat_led.toggle().unwrap();
         *I = (*I + 1) % DELAY_PATTERN.len();
     }
 

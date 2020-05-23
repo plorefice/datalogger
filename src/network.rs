@@ -4,8 +4,10 @@ use smolapps::{
     net::iface::{
         EthernetInterface, EthernetInterfaceBuilder, Neighbor, NeighborCache, Route, Routes,
     },
-    net::socket::{SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocketBuffer},
-    net::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address},
+    net::socket::{
+        SocketHandle, SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
+    },
+    net::wire::{EthernetAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address},
     sntp, tftp,
 };
 use stm32_eth::{Eth, RingEntry, RxDescriptor, TxDescriptor};
@@ -34,7 +36,7 @@ type PINS = (
 );
 
 // Network access details
-const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 20];
+pub const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 20];
 const IPV4_GATEWAY: [u8; 4] = [192, 168, 2, 1];
 const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 
@@ -105,7 +107,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     // Create socket set
     // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let mut sockets = unsafe {
-        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 2] = [None, None];
+        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 3] = [None, None, None];
         SocketSet::new(&mut SOCKET_ENTRIES[..])
     };
 
@@ -203,4 +205,28 @@ fn setup_tftp_server(sockets: &mut SocketSet) -> tftp::Server {
     };
 
     tftp::Server::new(sockets, rx_buffer, tx_buffer, Instant::now().into())
+}
+
+/// Creates a UDP socket for heartbeat packets.
+pub fn create_heartbeat_socket(sockets: &mut SocketSet) -> SocketHandle {
+    // NOTE(unsafe) static variable initialization
+    let buffer = unsafe {
+        static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
+        static mut UDP_DATA: [u8; 64] = [0; 64];
+        UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+    };
+
+    let mut socket = UdpSocket::new(
+        UdpSocketBuffer::new(&mut [UdpPacketMetadata::EMPTY; 0][..], &mut [0; 0][..]),
+        buffer,
+    );
+
+    socket
+        .bind(IpEndpoint {
+            addr: Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
+            port: 20_000,
+        })
+        .unwrap();
+
+    sockets.add(socket)
 }
