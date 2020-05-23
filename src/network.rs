@@ -1,13 +1,17 @@
 use crate::time::Instant;
 use core::mem::MaybeUninit;
 use smolapps::{
-    net::iface::{
-        EthernetInterface, EthernetInterfaceBuilder, Neighbor, NeighborCache, Route, Routes,
-    },
     net::socket::{
-        SocketHandle, SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
+        RawPacketMetadata, RawSocketBuffer, SocketHandle, SocketSet, SocketSetItem,
+        UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
     },
-    net::wire::{EthernetAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address},
+    net::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address},
+    net::{
+        dhcp::Dhcpv4Client,
+        iface::{
+            EthernetInterface, EthernetInterfaceBuilder, Neighbor, NeighborCache, Route, Routes,
+        },
+    },
     sntp, tftp,
 };
 use stm32_eth::{Eth, RingEntry, RxDescriptor, TxDescriptor};
@@ -36,14 +40,13 @@ type PINS = (
 );
 
 // Network access details
-pub const IPV4_ADDRESS: [u8; 4] = [192, 168, 2, 20];
-const IPV4_GATEWAY: [u8; 4] = [192, 168, 2, 1];
 const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 
 /// Container for all the network resources.
 pub struct Netlink<'a> {
     pub iface: EthernetInterface<'a, 'a, 'a, Eth<'a, 'a>>,
     pub sockets: SocketSet<'a, 'a, 'a>,
+    pub dhcp: Dhcpv4Client,
     pub sntp: sntp::Client,
     pub tftp: tftp::Server,
 }
@@ -107,18 +110,20 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     // Create socket set
     // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let mut sockets = unsafe {
-        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 3] = [None, None, None];
+        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 4] = [None, None, None, None];
         SocketSet::new(&mut SOCKET_ENTRIES[..])
     };
 
     let iface = setup_interface(eth);
 
+    let dhcp = setup_dhcp_client(&mut sockets);
     let sntp = setup_sntp_client(&mut sockets);
     let tftp = setup_tftp_server(&mut sockets);
 
     Netlink {
         iface,
         sockets,
+        dhcp,
         sntp,
         tftp,
     }
@@ -136,21 +141,16 @@ fn setup_interface<'a>(eth: Eth<'a, 'a>) -> EthernetInterface<'a, 'a, 'a, Eth<'a
 
     // NOTE(unsafe) initialization of MaybeUninit static variable
     unsafe {
-        IP_ADDRESS.as_mut_ptr().write([IpCidr::new(
-            Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
-            24,
-        )]);
+        IP_ADDRESS
+            .as_mut_ptr()
+            .write([IpCidr::new(Ipv4Address::UNSPECIFIED.into(), 0)]);
     }
 
-    let mut routes = {
+    let routes = {
         static mut ROUTES_STORAGE: [Option<(IpCidr, Route)>; 1] = [None; 1];
         // NOTE(unsafe) static variable initialization
         Routes::new(unsafe { &mut ROUTES_STORAGE[..] })
     };
-
-    routes
-        .add_default_ipv4_route(Ipv4Address::from_bytes(&IPV4_GATEWAY[..]).into())
-        .unwrap();
 
     EthernetInterfaceBuilder::new(eth)
         .ethernet_addr(EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
@@ -158,6 +158,28 @@ fn setup_interface<'a>(eth: Eth<'a, 'a>) -> EthernetInterface<'a, 'a, 'a, Eth<'a
         .ip_addrs(unsafe { &mut (*IP_ADDRESS.as_mut_ptr())[..] })
         .routes(routes)
         .finalize()
+}
+
+/// Spawns a DHCP client.
+fn setup_dhcp_client<'a, 'b, 'c>(sockets: &mut SocketSet<'a, 'b, 'c>) -> Dhcpv4Client
+where
+    'b: 'c,
+{
+    // NOTE(unsafe) static variable initialization
+    let rx_buffer = unsafe {
+        static mut RAW_METADATA: [RawPacketMetadata; 1] = [RawPacketMetadata::EMPTY; 1];
+        static mut RAW_DATA: [u8; 900] = [0; 900];
+        RawSocketBuffer::new(&mut RAW_METADATA[..], &mut RAW_DATA[..])
+    };
+
+    // NOTE(unsafe) static variable initialization
+    let tx_buffer = unsafe {
+        static mut RAW_METADATA: [RawPacketMetadata; 1] = [RawPacketMetadata::EMPTY; 1];
+        static mut RAW_DATA: [u8; 600] = [0; 600];
+        RawSocketBuffer::new(&mut RAW_METADATA[..], &mut RAW_DATA[..])
+    };
+
+    Dhcpv4Client::new(sockets, rx_buffer, tx_buffer, Instant::now().into())
 }
 
 /// Spawns an SNTP client.
@@ -216,17 +238,10 @@ pub fn create_heartbeat_socket(sockets: &mut SocketSet) -> SocketHandle {
         UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
     };
 
-    let mut socket = UdpSocket::new(
+    let socket = UdpSocket::new(
         UdpSocketBuffer::new(&mut [UdpPacketMetadata::EMPTY; 0][..], &mut [0; 0][..]),
         buffer,
     );
-
-    socket
-        .bind(IpEndpoint {
-            addr: Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
-            port: 20_000,
-        })
-        .unwrap();
 
     sockets.add(socket)
 }

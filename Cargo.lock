@@ -143,6 +143,7 @@ dependencies = [
  "managed",
  "panic-semihosting",
  "smolapps",
+ "smoltcp",
  "stm32-eth",
  "stm32f4xx-hal 0.8.1 (git+https://github.com/stm32-rs/stm32f4xx-hal)",
  "typenum",

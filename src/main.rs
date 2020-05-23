@@ -24,7 +24,7 @@ use network::Netlink;
 use smolapps::{
     net::{
         socket::{SocketHandle, UdpSocket},
-        wire::{IpEndpoint, Ipv4Address},
+        wire::{IpCidr, IpEndpoint, Ipv4Address},
     },
     tftp::Transfer,
 };
@@ -297,11 +297,35 @@ const APP: () = {
             |Netlink {
                  iface,
                  sockets,
+                 dhcp,
                  sntp,
                  tftp,
              }| {
                 // Poll socket interface
                 iface.poll(sockets, timestamp).ok();
+
+                // Process DHCP requests
+                if let Some(cfg) = dhcp.poll(iface, sockets, timestamp).unwrap_or(None) {
+                    // If an IP address is received, assign it to the interface
+                    match cfg.address {
+                        Some(cidr) if !iface.has_ip_addr(cidr.address()) => {
+                            iface.update_ip_addrs(|addrs| {
+                                addrs.iter_mut().nth(0).map(|addr| {
+                                    *addr = IpCidr::Ipv4(cidr);
+                                });
+                            });
+                        }
+                        _ => (),
+                    }
+
+                    // Also set the default gateway, even though we don't use it
+                    if let Some(route) = cfg.router {
+                        iface
+                            .routes_mut()
+                            .add_default_ipv4_route(route.into())
+                            .unwrap();
+                    }
+                }
 
                 // Process SNTP requests
                 let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
@@ -324,7 +348,11 @@ const APP: () = {
                 });
 
                 // Compute how long we can sleep
-                let mut timeout = tftp.next_poll(timestamp).min(sntp.next_poll(timestamp));
+                let mut timeout = tftp
+                    .next_poll(timestamp)
+                    .min(sntp.next_poll(timestamp))
+                    .min(dhcp.next_poll(timestamp));
+
                 if let Some(t) = iface.poll_delay(&sockets, timestamp) {
                     timeout = t.min(timeout);
                 }
@@ -371,30 +399,36 @@ const APP: () = {
         if HEARTBEAT_TIMER.is_none()
             || (HEARTBEAT_TIMER.is_some() && cx.scheduled > HEARTBEAT_TIMER.unwrap())
         {
-            let mut heartbeat = String::<U32>::new();
-
-            write!(
-                &mut heartbeat,
-                "datalogger {}.{}.{}.{}",
-                network::IPV4_ADDRESS[0],
-                network::IPV4_ADDRESS[1],
-                network::IPV4_ADDRESS[2],
-                network::IPV4_ADDRESS[3]
-            )
-            .unwrap();
-
             netlink.lock(|netlink| {
-                netlink
-                    .sockets
-                    .get::<UdpSocket>(*hb_socket)
-                    .send_slice(
-                        heartbeat.as_str().as_bytes(),
-                        IpEndpoint {
-                            addr: Ipv4Address::BROADCAST.into(),
-                            port: 20_000,
-                        },
-                    )
-                    .unwrap();
+                // Do not send out heartbeats if we don't have an IP yet
+                match netlink.iface.ipv4_address() {
+                    Some(ip) if !ip.is_unspecified() => {
+                        let mut heartbeat = String::<U32>::new();
+                        write!(&mut heartbeat, "datalogger {}", ip).unwrap();
+
+                        let mut socket = netlink.sockets.get::<UdpSocket>(*hb_socket);
+
+                        if !socket.is_open() {
+                            socket
+                                .bind(IpEndpoint {
+                                    addr: ip.into(),
+                                    port: 20_000,
+                                })
+                                .unwrap();
+                        }
+
+                        socket
+                            .send_slice(
+                                heartbeat.as_str().as_bytes(),
+                                IpEndpoint {
+                                    addr: Ipv4Address::BROADCAST.into(),
+                                    port: 20_000,
+                                },
+                            )
+                            .ok();
+                    }
+                    _ => {}
+                }
             });
 
             *HEARTBEAT_TIMER = Some(cx.scheduled + HEARTBEAT_PERIOD);
