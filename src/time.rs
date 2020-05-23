@@ -65,6 +65,12 @@ impl From<Instant> for net::time::Instant {
     }
 }
 
+impl Into<Instant> for net::time::Instant {
+    fn into(self) -> Instant {
+        Instant { inner: self.millis }
+    }
+}
+
 impl fmt::Debug for Instant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Instant").field(&self.inner).finish()

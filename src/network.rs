@@ -173,13 +173,13 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     let tftp = {
         let rx_buffer = unsafe {
             static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
-            static mut UDP_DATA: [u8; 1048] = [0; 1048];
+            static mut UDP_DATA: [u8; 1200] = [0; 1200];
             UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
         };
 
         let tx_buffer = unsafe {
             static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
-            static mut UDP_DATA: [u8; 1048] = [0; 1048];
+            static mut UDP_DATA: [u8; 1200] = [0; 1200];
             UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
         };
 

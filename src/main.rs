@@ -258,13 +258,14 @@ const APP: () = {
 
     // Run the network loop.
     #[task(
-        capacity = 2,
+        capacity = 4, // ETH IRQ handler + immediate timeout + scheduled timeout + one spare
         priority = 2,
         schedule = [netlink_loop],
         resources = [netlink, storage, ntp_synced, ntp_sync_led]
     )]
     fn netlink_loop(cx: netlink_loop::Context) {
         static mut TRANSFERS: [Option<Transfer<FileHandle<dwt::Delay>>>; 1] = [None; 1];
+        static mut SCHEDULED: Option<Instant> = None;
 
         let netlink_loop::Resources {
             mut netlink,
@@ -286,7 +287,7 @@ const APP: () = {
                  tftp,
              }| {
                 // Poll socket interface
-                iface.poll(sockets, timestamp).map(|_| ()).ok();
+                iface.poll(sockets, timestamp).ok();
 
                 // Process SNTP requests
                 let network_time = sntp.poll(sockets, timestamp).unwrap_or_else(|_| None);
@@ -309,18 +310,28 @@ const APP: () = {
                 });
 
                 // Compute how long we can sleep
-                let mut timeout = sntp.next_poll(timestamp).min(tftp.next_poll(timestamp));
-
-                iface
-                    .poll_delay(&sockets, timestamp)
-                    .map(|sockets_timeout| timeout = sockets_timeout.min(timeout));
+                let mut timeout = tftp.next_poll(timestamp).min(sntp.next_poll(timestamp));
+                if let Some(t) = iface.poll_delay(&sockets, timestamp) {
+                    timeout = t.min(timeout);
+                }
 
                 timeout
             },
         );
 
-        // Sleep until next scheduled activation or until the ETH interrupt wakes us
-        cx.schedule.netlink_loop(cx.scheduled + timeout.into()).ok();
+        if timeout.millis() == 0 {
+            // An immediate polling was requested (probably due to outgoing transmissions).
+            // Immediately reschedule the task.
+            cx.schedule.netlink_loop(cx.scheduled).ok();
+        } else if SCHEDULED.is_none()
+            || (SCHEDULED.is_some() && SCHEDULED.unwrap() < timestamp.into())
+        {
+            // No immediate action is required.
+            // In this case, only schedule an activation if the previously scheduled one has expired.
+            let scheduled = cx.scheduled + timeout.into();
+            cx.schedule.netlink_loop(scheduled).ok();
+            *SCHEDULED = Some(scheduled);
+        }
     }
 
     /// Low-priority background task that blinks the heartbeat led.
