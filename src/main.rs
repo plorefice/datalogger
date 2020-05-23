@@ -244,7 +244,7 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
-    #[task(schedule = [netlink_loop], resources = [netlink, storage, ntp_synced, ntp_sync_led])]
+    #[task(capacity = 2, schedule = [netlink_loop], resources = [netlink, storage, ntp_synced, ntp_sync_led])]
     fn netlink_loop(cx: netlink_loop::Context) {
         static mut TRANSFERS: [Option<Transfer<FileHandle<dwt::Delay>>>; 1] = [None; 1];
 
@@ -256,9 +256,8 @@ const APP: () = {
         } = cx.resources;
 
         // Current instant in smolctp time
-        let timestamp = net::time::Instant::from_millis(
-            Instant::now().duration_since(Instant::zero()).as_millis() as i64,
-        );
+        let timestamp =
+            net::time::Instant::from_millis((Instant::now() - Instant::zero()).as_millis() as i64);
 
         // Run the network loop.
         // This runs in a critical section shared with the ethernet interrupt,
@@ -325,13 +324,13 @@ const APP: () = {
     }
 
     /// Interrupt from the network interface. Runs at the second highest priority.
-    #[task(binds = ETH, spawn = [netlink_loop], resources = [netlink], priority = 14)]
+    #[task(binds = ETH, schedule = [netlink_loop], resources = [netlink], priority = 14)]
     fn ethernet_rx(cx: ethernet_rx::Context) {
         // Clear interrupt flags
         cx.resources.netlink.iface.device().interrupt_handler();
 
         // Spawn netlink loop to handle the packet
-        cx.spawn.netlink_loop().ok();
+        cx.schedule.netlink_loop(cx.start).ok();
     }
 
     /// Interrupt from the system timer. Runs at the highest priority.
