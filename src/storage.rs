@@ -16,6 +16,9 @@ use stm32f4xx_hal::{
 };
 
 /// An SD card attached to a SDIO bus.
+///
+/// A `RefCell` is used here since the `BlockDevice` trait only allows _immutable_ access for `read`
+/// operations, while the SDIO bus requires _mutable_ access.
 pub struct SdCard<D>(RefCell<(Sdio, D)>);
 
 impl<D> SdCard<D> {

@@ -39,10 +39,11 @@ type PINS = (
     PC5<Alternate<AF11>>,
 );
 
-// Network access details
 const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 
 /// Container for all the network resources.
+///
+/// Everything that needs to run just in the network loop goes here.
 pub struct Netlink<'a> {
     pub iface: EthernetInterface<'a, 'a, 'a, Eth<'a, 'a>>,
     pub sockets: SocketSet<'a, 'a, 'a>,
@@ -52,9 +53,9 @@ pub struct Netlink<'a> {
 }
 
 /// Performs all the heavy lifting required to bring up the Ethernet interface
-/// and allocate all the data structures required for smoltcp to function correctly.
+/// and allocate all the data structures required for the network stack to function correctly.
 ///
-/// Every single buffer allocated by this function is static, meaning that it won't be
+/// Every single buffer allocated by this function is `static`, meaning that it won't be
 /// stack-allocated. This is good, because we can catch OOM conditions during compilation.
 pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -> Netlink<'static> {
     // Initialize ethernet MAC
