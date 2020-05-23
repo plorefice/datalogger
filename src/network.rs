@@ -102,41 +102,6 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     // Start receiving packets
     eth.enable_interrupt();
 
-    // Create smoltcp interface
-    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
-    let iface = {
-        let ethernet_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
-
-        let neighbor_cache = unsafe {
-            static mut CACHE_ENTRIES: [Option<(IpAddress, Neighbor)>; 8] = [None; 8];
-            NeighborCache::new(&mut CACHE_ENTRIES[..])
-        };
-
-        static mut IP_ADDRESS: MaybeUninit<[IpCidr; 1]> = MaybeUninit::uninit();
-        unsafe {
-            IP_ADDRESS.as_mut_ptr().write([IpCidr::new(
-                Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
-                24,
-            )]);
-        }
-
-        let mut routes = {
-            static mut ROUTES_STORAGE: [Option<(IpCidr, Route)>; 1] = [None; 1];
-            Routes::new(unsafe { &mut ROUTES_STORAGE[..] })
-        };
-
-        routes
-            .add_default_ipv4_route(Ipv4Address::from_bytes(&IPV4_GATEWAY[..]).into())
-            .unwrap();
-
-        EthernetInterfaceBuilder::new(eth)
-            .ethernet_addr(ethernet_addr)
-            .neighbor_cache(neighbor_cache)
-            .ip_addrs(unsafe { &mut (*IP_ADDRESS.as_mut_ptr())[..] })
-            .routes(routes)
-            .finalize()
-    };
-
     // Create socket set
     // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let mut sockets = unsafe {
@@ -144,47 +109,10 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
         SocketSet::new(&mut SOCKET_ENTRIES[..])
     };
 
-    // Create SNTP client
-    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
-    let sntp = {
-        let sntp_rx_buffer = unsafe {
-            static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
-            static mut UDP_DATA: [u8; 128] = [0; 128];
-            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
-        };
+    let iface = setup_interface(eth);
 
-        let sntp_tx_buffer = unsafe {
-            static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
-            static mut UDP_DATA: [u8; 128] = [0; 128];
-            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
-        };
-
-        sntp::Client::new(
-            &mut sockets,
-            sntp_rx_buffer,
-            sntp_tx_buffer,
-            Ipv4Address::from_bytes(&SNTP_SERVER_ADDR[..]).into(),
-            Instant::now().into(),
-        )
-    };
-
-    // Create TFTP server
-    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
-    let tftp = {
-        let rx_buffer = unsafe {
-            static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
-            static mut UDP_DATA: [u8; 1200] = [0; 1200];
-            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
-        };
-
-        let tx_buffer = unsafe {
-            static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
-            static mut UDP_DATA: [u8; 1200] = [0; 1200];
-            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
-        };
-
-        tftp::Server::new(&mut sockets, rx_buffer, tx_buffer, Instant::now().into())
-    };
+    let sntp = setup_sntp_client(&mut sockets);
+    let tftp = setup_tftp_server(&mut sockets);
 
     Netlink {
         iface,
@@ -192,4 +120,87 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
         sntp,
         tftp,
     }
+}
+
+/// Creates the `smoltcp` interface.
+fn setup_interface<'a>(eth: Eth<'a, 'a>) -> EthernetInterface<'a, 'a, 'a, Eth<'a, 'a>> {
+    static mut IP_ADDRESS: MaybeUninit<[IpCidr; 1]> = MaybeUninit::uninit();
+
+    // NOTE(unsafe) static variable initialization
+    let neighbor_cache = unsafe {
+        static mut CACHE_ENTRIES: [Option<(IpAddress, Neighbor)>; 8] = [None; 8];
+        NeighborCache::new(&mut CACHE_ENTRIES[..])
+    };
+
+    // NOTE(unsafe) initialization of MaybeUninit static variable
+    unsafe {
+        IP_ADDRESS.as_mut_ptr().write([IpCidr::new(
+            Ipv4Address::from_bytes(&IPV4_ADDRESS[..]).into(),
+            24,
+        )]);
+    }
+
+    let mut routes = {
+        static mut ROUTES_STORAGE: [Option<(IpCidr, Route)>; 1] = [None; 1];
+        // NOTE(unsafe) static variable initialization
+        Routes::new(unsafe { &mut ROUTES_STORAGE[..] })
+    };
+
+    routes
+        .add_default_ipv4_route(Ipv4Address::from_bytes(&IPV4_GATEWAY[..]).into())
+        .unwrap();
+
+    EthernetInterfaceBuilder::new(eth)
+        .ethernet_addr(EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
+        .neighbor_cache(neighbor_cache)
+        .ip_addrs(unsafe { &mut (*IP_ADDRESS.as_mut_ptr())[..] })
+        .routes(routes)
+        .finalize()
+}
+
+/// Spawns an SNTP client.
+fn setup_sntp_client<'a, 'b, 'c>(sockets: &mut SocketSet<'a, 'b, 'c>) -> sntp::Client
+where
+    'b: 'c,
+{
+    // NOTE(unsafe) static variable initialization
+    let rx_buffer = unsafe {
+        static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
+        static mut UDP_DATA: [u8; 128] = [0; 128];
+        UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+    };
+
+    // NOTE(unsafe) static variable initialization
+    let tx_buffer = unsafe {
+        static mut UDP_METADATA: [UdpPacketMetadata; 1] = [UdpPacketMetadata::EMPTY; 1];
+        static mut UDP_DATA: [u8; 128] = [0; 128];
+        UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+    };
+
+    sntp::Client::new(
+        sockets,
+        rx_buffer,
+        tx_buffer,
+        Ipv4Address::from_bytes(&SNTP_SERVER_ADDR[..]).into(),
+        Instant::now().into(),
+    )
+}
+
+/// Spawns a TFTP server.
+fn setup_tftp_server(sockets: &mut SocketSet) -> tftp::Server {
+    // NOTE(unsafe) static variable initialization
+    let rx_buffer = unsafe {
+        static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
+        static mut UDP_DATA: [u8; 1200] = [0; 1200];
+        UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+    };
+
+    // NOTE(unsafe) static variable initialization
+    let tx_buffer = unsafe {
+        static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
+        static mut UDP_DATA: [u8; 1200] = [0; 1200];
+        UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+    };
+
+    tftp::Server::new(sockets, rx_buffer, tx_buffer, Instant::now().into())
 }
