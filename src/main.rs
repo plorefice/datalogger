@@ -17,8 +17,9 @@ extern crate panic_semihosting;
 use cast::u64;
 use cortex_m::peripheral::NVIC;
 use dht11::{Dht11, Measurement};
+use managed::ManagedSlice;
 use network::Netlink;
-use smolapps::net;
+use smolapps::{net, tftp::Transfer};
 use stm32f4xx_hal::{
     dwt::{self, Dwt, DwtExt},
     gpio::{
@@ -35,7 +36,7 @@ use stm32f4xx_hal::{
     sdio::{ClockFreq, Sdio},
     stm32::Interrupt,
 };
-use storage::{SdCard, Storage};
+use storage::{FileHandle, SdCard, Storage};
 use time::{Duration, Instant, SystemTime, Ticker};
 
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = crate::time::Ticker)]
@@ -243,10 +244,16 @@ const APP: () = {
         sync_btn.clear_interrupt_pending_bit();
     }
 
-    #[task(schedule = [netlink_loop], resources = [netlink, ntp_synced, ntp_sync_led])]
-    fn netlink_loop(mut cx: netlink_loop::Context) {
-        let led = cx.resources.ntp_sync_led;
-        let mut synced = cx.resources.ntp_synced;
+    #[task(schedule = [netlink_loop], resources = [netlink, storage, ntp_synced, ntp_sync_led])]
+    fn netlink_loop(cx: netlink_loop::Context) {
+        static mut TRANSFERS: [Option<Transfer<FileHandle<dwt::Delay>>>; 1] = [None; 1];
+
+        let netlink_loop::Resources {
+            mut netlink,
+            mut storage,
+            mut ntp_synced,
+            ntp_sync_led,
+        } = cx.resources;
 
         // Current instant in smolctp time
         let timestamp = net::time::Instant::from_millis(
@@ -256,11 +263,12 @@ const APP: () = {
         // Run the network loop.
         // This runs in a critical section shared with the ethernet interrupt,
         // so we need to verify that this does not cause problems like packet loss.
-        let timeout = cx.resources.netlink.lock(
+        let timeout = netlink.lock(
             |Netlink {
                  iface,
                  sockets,
                  sntp,
+                 tftp,
              }| {
                 // Poll socket interface
                 iface.poll(sockets, timestamp).map(|_| ()).ok();
@@ -270,15 +278,27 @@ const APP: () = {
                 if let Some(time) = network_time {
                     // `time` is in seconds, to convert it to millis
                     SystemTime::adjust(u64(time) * 1_000);
-                    synced.lock(|sync| *sync = true);
-                    led.set_high().unwrap();
+                    ntp_synced.lock(|sync| *sync = true);
+                    ntp_sync_led.set_high().unwrap();
                 }
 
+                // Process TFTP transfers
+                storage.lock(|storage| {
+                    tftp.serve(
+                        sockets,
+                        &mut *storage,
+                        &mut ManagedSlice::Borrowed(&mut *TRANSFERS),
+                        timestamp,
+                    )
+                    .ok();
+                });
+
                 // Compute how long we can sleep
-                let mut timeout = sntp.next_poll(timestamp);
+                let mut timeout = sntp.next_poll(timestamp).min(tftp.next_poll(timestamp));
+
                 iface
                     .poll_delay(&sockets, timestamp)
-                    .map(|sockets_timeout| timeout = sockets_timeout);
+                    .map(|sockets_timeout| timeout = sockets_timeout.min(timeout));
 
                 timeout
             },

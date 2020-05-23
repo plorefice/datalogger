@@ -9,6 +9,7 @@ use heapless::{
     consts::{U32, U4096},
     String,
 };
+use smolapps::tftp;
 use stm32f4xx_hal::{
     hal::blocking::delay::DelayMs,
     sdio::{self, Sdio},
@@ -184,5 +185,70 @@ impl<D: DelayMs<u8>> Storage<D> {
             .write(&mut self.volume, file, &self.buffer.as_str().as_bytes())?;
 
         Ok(())
+    }
+}
+
+impl<D: DelayMs<u8>> tftp::Context for Storage<D> {
+    type Handle = FileHandle<D>;
+
+    fn open(&mut self, filename: &str, write_mode: bool) -> Result<Self::Handle, ()> {
+        let root_dir = self
+            .controller
+            .open_root_dir(&self.volume)
+            .map_err(|_| ())?;
+
+        let res = self.controller.open_file_in_dir(
+            &mut self.volume,
+            &root_dir,
+            filename,
+            if write_mode {
+                Mode::ReadWriteCreateOrTruncate
+            } else {
+                Mode::ReadOnly
+            },
+        );
+
+        self.controller.close_dir(&self.volume, root_dir);
+
+        res.map(|f| FileHandle {
+            storage: self,
+            file: f,
+        })
+        .map_err(|_| ())
+    }
+
+    fn close(&mut self, handle: Self::Handle) {
+        self.controller.close_file(&self.volume, handle.file).ok();
+    }
+}
+
+/// A handle to an open file returned from a `Storage`.
+pub struct FileHandle<D: DelayMs<u8>> {
+    // A raw pointer is used here because multiple files could be open on a given storage at each time,
+    // breaking the unique mutable borrow rule. However, this is not an issue, since the TFTP server
+    // operates on a single file at a time.
+    storage: *mut Storage<D>,
+    file: File,
+}
+
+impl<D: DelayMs<u8>> tftp::Handle for FileHandle<D> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
+        // NOTE(unsafe) see comments on `FileHandle`
+        let storage = unsafe { &mut *self.storage };
+
+        storage
+            .controller
+            .read(&storage.volume, &mut self.file, buf)
+            .map_err(|_| ())
+    }
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, ()> {
+        // NOTE(unsafe) see comments on `FileHandle`
+        let storage = unsafe { &mut *self.storage };
+
+        storage
+            .controller
+            .write(&mut storage.volume, &mut self.file, buf)
+            .map_err(|_| ())
     }
 }

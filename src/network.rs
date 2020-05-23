@@ -6,7 +6,7 @@ use smolapps::{
     net::socket::{SocketSet, SocketSetItem, UdpPacketMetadata, UdpSocketBuffer},
     net::time::Instant,
     net::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address},
-    sntp::Client,
+    sntp, tftp,
 };
 use stm32_eth::{Eth, RingEntry, RxDescriptor, TxDescriptor};
 use stm32f4xx_hal::{
@@ -41,8 +41,9 @@ const SNTP_SERVER_ADDR: [u8; 4] = [62, 112, 134, 4];
 /// Container for all the network resources.
 pub struct Netlink<'a> {
     pub iface: EthernetInterface<'a, 'a, 'a, Eth<'a, 'a>>,
-    pub sntp: Client,
     pub sockets: SocketSet<'a, 'a, 'a>,
+    pub sntp: sntp::Client,
+    pub tftp: tftp::Server,
 }
 
 /// Performs all the heavy lifting required to bring up the Ethernet interface
@@ -139,7 +140,7 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
     // Create socket set
     // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
     let mut sockets = unsafe {
-        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 1] = [None; 1];
+        static mut SOCKET_ENTRIES: [Option<SocketSetItem>; 2] = [None, None];
         SocketSet::new(&mut SOCKET_ENTRIES[..])
     };
 
@@ -158,18 +159,37 @@ pub fn setup(syscfg: SYSCFG, pins: PINS, mac: ETHERNET_MAC, dma: ETHERNET_DMA) -
             UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
         };
 
-        Client::new(
+        sntp::Client::new(
             &mut sockets,
             sntp_rx_buffer,
             sntp_tx_buffer,
             Ipv4Address::from_bytes(&SNTP_SERVER_ADDR[..]).into(),
-            Instant::from_secs(0),
+            Instant::from_secs(0), // TODO: use Instant::now() here
         )
+    };
+
+    // Create TFTP server
+    // NOTE(unsafe) initialization of MaybeUninit static variable and static mut dereference
+    let tftp = {
+        let rx_buffer = unsafe {
+            static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
+            static mut UDP_DATA: [u8; 1048] = [0; 1048];
+            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+        };
+
+        let tx_buffer = unsafe {
+            static mut UDP_METADATA: [UdpPacketMetadata; 2] = [UdpPacketMetadata::EMPTY; 2];
+            static mut UDP_DATA: [u8; 1048] = [0; 1048];
+            UdpSocketBuffer::new(&mut UDP_METADATA[..], &mut UDP_DATA[..])
+        };
+
+        tftp::Server::new(&mut sockets, rx_buffer, tx_buffer, Instant::from_secs(0))
     };
 
     Netlink {
         iface,
         sockets,
         sntp,
+        tftp,
     }
 }

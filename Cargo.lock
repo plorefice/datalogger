@@ -140,6 +140,7 @@ dependencies = [
  "embedded-sdmmc",
  "heapless",
  "log",
+ "managed",
  "panic-semihosting",
  "smolapps",
  "stm32-eth",
@@ -331,11 +332,12 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
 name = "smolapps"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa0394c19b404498faa0ed9245ce7075e8752a4751a9e085be80bc6b4442d51"
+checksum = "20d1ebbe4c25e3f0628a1b723200e4aaa041eba77a3741cf782f0050152a9d3c"
 dependencies = [
  "byteorder",
+ "managed",
  "smoltcp",
 ]
 
