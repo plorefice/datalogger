@@ -310,9 +310,9 @@ const APP: () = {
                     match cfg.address {
                         Some(cidr) if !iface.has_ip_addr(cidr.address()) => {
                             iface.update_ip_addrs(|addrs| {
-                                addrs.iter_mut().nth(0).map(|addr| {
+                                if let Some(addr) = addrs.first_mut() {
                                     *addr = IpCidr::Ipv4(cidr);
-                                });
+                                }
                             });
                         }
                         _ => (),
@@ -320,10 +320,7 @@ const APP: () = {
 
                     // Also set the default gateway, even though we don't use it
                     if let Some(route) = cfg.router {
-                        iface
-                            .routes_mut()
-                            .add_default_ipv4_route(route.into())
-                            .unwrap();
+                        iface.routes_mut().add_default_ipv4_route(route).unwrap();
                     }
                 }
 

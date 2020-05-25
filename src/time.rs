@@ -40,14 +40,14 @@ impl Instant {
     }
 
     /// Returns the amount of time elapsed since this instant was created.
-    pub fn elapsed(&self) -> Duration {
+    pub fn elapsed(self) -> Duration {
         let diff = Instant::now().inner.wrapping_sub(self.inner);
         assert!(diff >= 0, "instant now is earlier than self");
         Duration::from_millis(u32(diff).unwrap())
     }
 
     /// Returns the amount of time elapsed from another instant to this one.
-    pub fn duration_since(&self, earlier: Instant) -> Duration {
+    pub fn duration_since(self, earlier: Instant) -> Duration {
         let diff = self.inner.wrapping_sub(earlier.inner);
         assert!(diff >= 0, "second instant is later than self");
         Duration::from_millis(u32(diff).unwrap())
@@ -147,7 +147,7 @@ impl SystemTime {
     }
 
     /// Returns this system time expressed in seconds since Unix epoch.
-    pub fn as_secs(&self) -> u64 {
+    pub fn as_secs(self) -> u64 {
         self.inner / 1_000
     }
 
