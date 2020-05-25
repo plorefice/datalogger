@@ -79,7 +79,7 @@ impl fmt::Debug for Instant {
 
 impl ops::AddAssign<Duration> for Instant {
     fn add_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_add(dur.as_millis() as i64);
+        self.inner = self.inner.wrapping_add(i64(dur.as_millis()).unwrap());
     }
 }
 
@@ -94,7 +94,7 @@ impl ops::Add<Duration> for Instant {
 
 impl ops::SubAssign<Duration> for Instant {
     fn sub_assign(&mut self, dur: Duration) {
-        self.inner = self.inner.wrapping_sub(dur.as_millis() as i64);
+        self.inner = self.inner.wrapping_sub(i64(dur.as_millis()).unwrap());
     }
 }
 
