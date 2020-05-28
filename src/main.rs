@@ -12,10 +12,13 @@ mod time;
 use atsamd_hal::{
     clock::GenericClockController,
     common::gpio::Pa20,
-    gpio::{OpenDrain, Output},
+    gpio::{IntoFunction, OpenDrain, Output},
     prelude::*,
+    usb::UsbBus,
 };
 use time::{Duration, Ticker};
+use usb_device::{bus::UsbBusAllocator, prelude::*};
+use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 #[rtfm::app(device = atsamd_hal::target_device, peripherals = true, monotonic = crate::time::Ticker)]
 const APP: () = {
@@ -26,6 +29,10 @@ const APP: () = {
         // dht11: Dht11<PA8<Output<OpenDrain>>>,
         /// LED indicating CPU activity
         heartbeat_led: Pa20<Output<OpenDrain>>,
+        // USB bus configured as USB device.
+        usb_dev: UsbDevice<'static, UsbBus>,
+        // CDC class USB device.
+        serial: SerialPort<'static, UsbBus>,
     }
 
     #[init(schedule = [heartbeat])]
@@ -55,6 +62,28 @@ const APP: () = {
         let mut heartbeat_led = pins.pa20.into_open_drain_output(&mut pins.port);
         heartbeat_led.set_low().unwrap();
 
+        // Allocate USB bus instance (statically so that the borrow-checker is happy)
+        let bus_allocator = unsafe {
+            static mut USB_ALLOCATOR: Option<UsbBusAllocator<UsbBus>> = None;
+
+            USB_ALLOCATOR = Some(UsbBusAllocator::new(UsbBus::new(
+                &clocks.usb(&gclk0).unwrap(),
+                &mut cx.device.PM,
+                pins.pa24.into_function(&mut pins.port),
+                pins.pa25.into_function(&mut pins.port),
+                cx.device.USB,
+            )));
+
+            USB_ALLOCATOR.as_ref().unwrap()
+        };
+
+        // Create USB device and a serial port on top of it
+        let serial = SerialPort::new(&bus_allocator);
+        let usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x16c0, 0x27dd))
+            .product("Arduino Serial Port")
+            .device_class(USB_CLASS_CDC)
+            .build();
+
         // Schedule periodic tasks
         // cx.schedule.sensor_reading(cx.start).unwrap();
         cx.schedule.heartbeat(cx.start).unwrap();
@@ -63,6 +92,8 @@ const APP: () = {
             clk,
             // dht11,
             heartbeat_led,
+            usb_dev,
+            serial,
         }
     }
 
@@ -112,6 +143,28 @@ const APP: () = {
         *I = (*I + 1) % DELAY_PATTERN.len();
     }
 
+    /// Interrupt from the USB port.
+    #[task(
+        binds = USB,
+        priority = 14,
+        resources = [usb_dev, serial]
+    )]
+    fn usb(cx: usb::Context) {
+        let usb::Resources { usb_dev, serial } = cx.resources;
+
+        usb_dev.poll(&mut [serial]);
+        let mut buf = [0u8; 64];
+
+        if let Ok(count) = serial.read(&mut buf) {
+            for (i, c) in buf.iter().enumerate() {
+                if i >= count {
+                    break;
+                }
+                serial.write(&[c.clone()]).unwrap();
+            }
+        };
+    }
+
     /// Interrupt from the system timer. Runs at the highest priority.
     #[task(
         binds = TC3,
@@ -128,7 +181,6 @@ const APP: () = {
     }
 };
 
-#[cfg(not(debug_assertions))]
 #[inline(never)]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
