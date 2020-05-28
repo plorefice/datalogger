@@ -1,29 +1,20 @@
+use atsamd_hal::{
+    clock::Tcc2Tc3Clock,
+    prelude::*,
+    samd21::timer::TimerCounter3,
+    target_device::{PM, TC3},
+};
 use cast::{i64, u32};
 use core::{
     cell::RefCell,
     cmp,
     convert::{Infallible, TryInto},
-    fmt, ops,
-    sync::atomic::{AtomicU32, Ordering},
-    time,
+    fmt, ops, time,
 };
-use cortex_m::{
-    interrupt::{self, Mutex},
-    peripheral::NVIC,
-};
-use smolapps::net;
-use stm32f4xx_hal::{
-    rcc::Clocks,
-    stm32::{Interrupt, TIM2},
-    time::U32Ext,
-    timer::{Event, Timer},
-};
+use cortex_m::interrupt::{self, Mutex};
 
 /// Current monotonic time expressed in milliseconds.
-static TICK: AtomicU32 = AtomicU32::new(0);
-
-/// System wall clock backing storage.
-static CLOCK: Mutex<RefCell<u64>> = Mutex::new(RefCell::new(0));
+static TICK: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
 
 /// A measurement of a monotonically nondecreasing clock. Opaque and useful only with `Duration`.
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -35,7 +26,7 @@ impl Instant {
     /// Returns an instant corresponding to "now".
     pub fn now() -> Self {
         Instant {
-            inner: i64(TICK.load(Ordering::Acquire)),
+            inner: i64(interrupt::free(|cs| *TICK.borrow(cs).borrow())),
         }
     }
 
@@ -56,18 +47,6 @@ impl Instant {
     /// Returns the origin of time.
     pub const fn zero() -> Instant {
         Instant { inner: 0 }
-    }
-}
-
-impl From<Instant> for net::time::Instant {
-    fn from(i: Instant) -> Self {
-        net::time::Instant::from_millis(i.inner)
-    }
-}
-
-impl Into<Instant> for net::time::Instant {
-    fn into(self) -> Instant {
-        Instant { inner: self.millis }
     }
 }
 
@@ -127,48 +106,6 @@ impl PartialOrd for Instant {
     }
 }
 
-/// A measurement of the system clock, useful for talking to external entities
-/// like the file system or other processes.
-///
-/// Counterpart of [`SystemTime`] present in the Standard Library.
-///
-/// [`SystemTime`]: https://doc.rust-lang.org/std/time/struct.SystemTime.html
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct SystemTime {
-    inner: u64,
-}
-
-impl SystemTime {
-    /// Returns the system time corresponding to "now".
-    pub fn now() -> Self {
-        Self {
-            inner: interrupt::free(|cs| *CLOCK.borrow(cs).borrow()),
-        }
-    }
-
-    /// Returns this system time expressed in seconds since Unix epoch.
-    pub fn as_secs(self) -> u64 {
-        self.inner / 1_000
-    }
-
-    /// Ticks the system wall clock by one millisecond.
-    pub fn tick() {
-        interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() += 1);
-    }
-
-    /// Sets the system wall clock to the specified `time`, espressed in **milliseconds**
-    /// since the Unix epoch.
-    pub fn adjust(time: u64) {
-        interrupt::free(|cs| *CLOCK.borrow(cs).borrow_mut() = time);
-    }
-}
-
-impl fmt::Debug for SystemTime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("SystemTime").field(&self.inner).finish()
-    }
-}
-
 /// A `Duration` type to represent a span of time, typically used for system timeouts.
 #[derive(Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Duration {
@@ -191,12 +128,6 @@ impl Duration {
     /// Returns the total number of whole milliseconds contained by this `Duration`.
     pub fn as_millis(self) -> u64 {
         self.inner.as_millis() as u64
-    }
-}
-
-impl From<net::time::Duration> for Duration {
-    fn from(d: net::time::Duration) -> Self {
-        Duration { inner: d.into() }
     }
 }
 
@@ -242,25 +173,26 @@ impl ops::Sub<Duration> for Duration {
 
 /// Implementation of the `Monotonic` trait based on a hardware timer with millisecond precision.
 pub struct Ticker {
-    inner: Timer<TIM2>,
+    inner: TimerCounter3,
 }
 
 impl Ticker {
-    /// Initializes the ticker to use the TIM2 peripheral under the hood.
-    pub fn init(tim: TIM2, clocks: Clocks) -> Self {
-        // NOTE(unsafe) we are not in an interrupt context
-        unsafe { NVIC::unmask(Interrupt::TIM2) };
-
-        let mut inner = Timer::tim2(tim, 1.khz(), clocks);
-        inner.listen(Event::TimeOut);
+    /// Initializes the ticker to use the TC3 peripheral under the hood.
+    pub fn init(tc: TC3, clock: &Tcc2Tc3Clock, pm: &mut PM) -> Self {
+        let mut inner = TimerCounter3::tc3_(clock, tc, pm);
+        inner.start(1.khz());
+        inner.enable_interrupt();
 
         Self { inner }
     }
 
     /// Ticks the internal timer, increasing the current monotonic time by one millisecond.
     pub fn tick(&mut self) {
-        self.inner.clear_interrupt(Event::TimeOut);
-        TICK.fetch_add(1, Ordering::Release);
+        if self.inner.wait().is_ok() {
+            interrupt::free(|cs| {
+                *TICK.borrow(cs).borrow_mut() += 1;
+            });
+        }
     }
 }
 
@@ -269,7 +201,7 @@ impl rtfm::Monotonic for Ticker {
 
     fn ratio() -> rtfm::Fraction {
         rtfm::Fraction {
-            numerator: 168,
+            numerator: 48,
             denominator: 1,
         }
     }
@@ -279,7 +211,7 @@ impl rtfm::Monotonic for Ticker {
     }
 
     unsafe fn reset() {
-        TICK.store(0, Ordering::Release);
+        interrupt::free(|cs| *TICK.borrow(cs).borrow_mut() = 0);
     }
 
     fn zero() -> Self::Instant {

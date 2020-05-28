@@ -1,3 +1,3 @@
 # `datalogger`
 
-> Toy application to test some peripherals on an STM32F4 MCU
+> Toy application to test some peripherals on an Arduino MKR WiFi 1010 board.

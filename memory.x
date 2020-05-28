@@ -1,6 +1,6 @@
-/* Memory configuration for the STM32F407VG MCU */
+/* Memory configuration for the Arduino MKR WiFi 1010 */
 MEMORY
 {
-  FLASH : ORIGIN = 0x08000000, LENGTH = 1M
-  RAM : ORIGIN = 0x20000000, LENGTH = 128K
+  FLASH : ORIGIN = 0x00000000, LENGTH = 256K
+  RAM : ORIGIN = 0x20000000, LENGTH = 32K
 }

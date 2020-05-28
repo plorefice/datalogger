@@ -11,12 +11,12 @@ set print asm-demangle on
 set backtrace limit 32
 
 # detect unhandled exceptions, hard faults and panics
-break DefaultHandler
-break HardFault
-break rust_begin_unwind
+# break DefaultHandler
+# break HardFault
+# break rust_begin_unwind
 
 # enable semihosting
-monitor arm semihosting enable
+# monitor arm semihosting enable
 
 # # send captured ITM to the file itm.fifo
 # # (the microcontroller SWO pin must be connected to the programmer SWO pin)
@@ -31,7 +31,7 @@ monitor arm semihosting enable
 # # enable ITM port 0
 # monitor itm port 0 on
 
-# load symbols
+# load firmware
 load
 
 # continue execution until the next breakpoint

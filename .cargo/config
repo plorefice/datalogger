@@ -1,6 +1,6 @@
-[target.thumbv7em-none-eabihf]
+[target.thumbv6m-none-eabi]
 runner = "arm-none-eabi-gdb -q -x openocd.gdb"
 rustflags = ["-C", "link-arg=-Tlink.x"]
 
 [build]
-target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
+target = "thumbv6m-none-eabi" # Cortex-M0+
