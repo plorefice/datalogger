@@ -15,7 +15,6 @@ use atsamd_hal::{
     gpio::{OpenDrain, Output},
     prelude::*,
 };
-use panic_halt as _;
 use time::{Duration, Ticker};
 
 #[rtfm::app(device = atsamd_hal::target_device, peripherals = true, monotonic = crate::time::Ticker)]
